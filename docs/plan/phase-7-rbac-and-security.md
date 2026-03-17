@@ -15,7 +15,7 @@ Harden the operator and runtime resources before wider rollout.
 ## Deliverables
 
 - RBAC manifests that match actual controller behavior.
-- Secret reference patterns for Tailscale and certificate providers.
+- Secret reference patterns for Tailscale admin access and certificate providers.
 - Security context defaults for operator, CoreDNS, and Caddy workloads.
 - Clear rules for ownership, finalizers, and garbage collection.
 - Secret provider ordering guidance for Argo managed installs.
@@ -27,6 +27,7 @@ Harden the operator and runtime resources before wider rollout.
 - Explicit read and write access only for resources each controller owns.
 - Minimal service account scope for runtime components.
 - Secret material must exist before the operator deployment starts reconciling provider dependent resources.
+- Tailnet-level automation credentials should be scoped and auditable because they can change split-DNS behavior for the whole tailnet.
 
 ## Exit Criteria
 

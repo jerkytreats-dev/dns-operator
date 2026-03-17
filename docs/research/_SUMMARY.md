@@ -2,155 +2,123 @@
 
 ## Overview
 
-The `docs/research/` directory contains comprehensive reference architecture documentation for each domain in the DNS operator project. Each document analyzes the current reference implementation and provides detailed migration considerations for transitioning to a Kubernetes operator pattern. All documents follow a consistent structure covering architecture patterns, core components, data flows, and migration strategies.
+The `docs/research/` directory should be read through the lens of the product, not through the lens of one-for-one migration of the legacy app.
+
+The product is:
+
+- an authoritative nameserver for `internal.jerkytreats.dev`
+- reachable only inside the Tailscale network via split-DNS
+- able to publish browser-facing internal services over valid HTTPS
+- able to support nested hostnames such as `bar.foo.internal.jerkytreats.dev`
+- based on shared explicit SAN certificate management rather than wildcard assumptions
+- centered on CRD-first durable state with a convenience API for fast bootstrap
 
 ## Core Domains
 
 ### 1. **API Domain** (`api.md`)
-- **Purpose**: REST API layer with handler registry pattern
-- **Key Features**: Route registration via `RouteInfo` structs, modular handler initialization, dependency injection
-- **Migration**: Replace HTTP handlers with Kubernetes controllers; use Kubernetes API server for CRD management
+- **Purpose**: Convenience control surface for fast bootstrap by humans and agents
+- **Key Features**: Creates or updates durable resources without requiring direct CRD authoring
+- **Direction**: Keep the API as a first-class interface, not as deprecated compatibility
 
 ### 2. **Certificate Domain** (`certificate.md`)
-- **Purpose**: SSL/TLS certificate lifecycle management with Let's Encrypt
-- **Key Features**: ACME DNS-01 challenges via Cloudflare, SAN management, automatic renewal with backoff
-- **Migration**: Certificate CRD; store certificates in Kubernetes Secrets; controller-based renewal
+- **Purpose**: Shared SAN certificate lifecycle for published internal hosts
+- **Key Features**: ACME DNS-01 via Cloudflare, effective SAN set derivation, renewal and debounce behavior
+- **Direction**: Model certificate ownership around a shared bundle, because wildcard is not the target model
 
 ### 3. **DNS Domain** (`dns.md`)
-- **Purpose**: DNS record and zone file management with CoreDNS integration
-- **Key Features**: Zone file-based DNS, template-based Corefile generation, record validation
-- **Migration**: DNSRecord CRD; zone files in ConfigMaps; controller aggregates records by zone
+- **Purpose**: Authoritative DNS and zone rendering for `internal.jerkytreats.dev`
+- **Key Features**: Full-hostname records, nested labels, zone aggregation, CoreDNS integration
+- **Direction**: Keep `DNSRecord` as the lower-level primitive while projecting `PublishedService` into DNS
 
 ### 4. **Proxy Domain** (`proxy.md`)
-- **Purpose**: Caddy reverse proxy configuration management
-- **Key Features**: Template-based Caddyfile generation, rule persistence, automatic reload
-- **Migration**: ProxyRule CRD; Caddyfile in ConfigMap; Caddy as separate Deployment
+- **Purpose**: HTTPS publishing runtime for internal services
+- **Key Features**: Caddyfile generation, backend transport controls, HTTP-to-HTTPS redirects
+- **Direction**: Drive runtime config from published services rather than a separate proxy-only user resource
 
 ### 5. **Tailscale Domain** (`tailscale.md`)
-- **Purpose**: Tailscale API integration for device discovery and IP resolution
-- **Key Features**: Device synchronization, IP resolution (100.64.x.x range), polling-based sync
-- **Migration**: TailscaleDevice CRD; controller polling; DNSRecord references TailscaleDevice for IP resolution
+- **Purpose**: Split-DNS bootstrap and repair for the internal zone
+- **Key Features**: Restricted nameserver configuration, drift detection, admin API credentials
+- **Direction**: Device discovery is not part of the v1 product direction
 
 ## Infrastructure Domains
 
 ### 6. **Configuration** (`config.md`)
-- **Purpose**: Centralized configuration management using Viper
-- **Key Features**: YAML files with environment variable overrides, required key validation, hot-reload capability
-- **Migration**: ConfigMaps for non-sensitive data; Secrets for sensitive data; CRD specs for resource config
+- **Purpose**: Operator and runtime configuration
+- **Key Features**: ConfigMap defaults, Secret-backed credentials, runtime wiring
+- **Direction**: Keep Kubernetes-native config and remove legacy file assumptions from the target design
 
 ### 7. **Logging** (`logging.md`)
-- **Purpose**: Centralized structured logging with Zap
-- **Key Features**: Singleton pattern, configurable log levels, thread-safe operations
-- **Migration**: Continue with Zap; add Kubernetes context; JSON logging for production
+- **Purpose**: Structured logging for controllers, runtime, and API
+- **Key Features**: Context-rich logs for publish, cert, and split-DNS flows
+- **Direction**: Keep structured logging and improve product-oriented context
 
 ### 8. **Persistence** (`persistence.md`)
-- **Purpose**: File-based storage with atomic operations and backup management
-- **Key Features**: Thread-safe file operations, automatic backup creation, recovery from corruption
-- **Migration**: Replace with CRD storage in etcd; remove file storage layer
+- **Purpose**: Historical reference for file-based storage
+- **Key Features**: Understand what must be migrated from JSON and rendered files
+- **Direction**: Replace application-managed persistence with Kubernetes state and generated artifacts
 
 ### 9. **Healthcheck** (`healthcheck.md`)
-- **Purpose**: Health checking capabilities with aggregation support
-- **Key Features**: Interface-based design, component-specific checkers, latency measurement
-- **Migration**: Kubernetes liveness/readiness probes; CRD status for resource health
+- **Purpose**: Health and readiness reporting
+- **Key Features**: Manager probes, runtime checks, operational visibility
+- **Direction**: Success should correlate to end-user browser and DNS experience, not just process liveness
 
 ### 10. **Firewall** (`firewall.md`)
-- **Purpose**: Linux firewall rule management using ipset and iptables
-- **Key Features**: Tailscale CIDR protection (100.64.0.0/10), automatic rule creation/cleanup
-- **Migration**: Kubernetes NetworkPolicy resources; remove privileged container requirements
+- **Purpose**: Historical reference only
+- **Key Features**: Legacy iptables/ipset management
+- **Direction**: Not part of the v1 product roadmap
 
 ## Command Domains
 
 ### 11. **API Server Command** (`cmd-api.md`)
-- **Purpose**: Main entry point for DNS Manager service
-- **Key Features**: Component initialization, HTTP/HTTPS server management, background processes
-- **Migration**: Replace with controller-runtime manager; remove HTTP server
+- **Purpose**: Entry point and lifecycle for the operator plus convenience API
+- **Key Features**: Manager lifecycle, optional API surface, health endpoints
+- **Direction**: Kubernetes manager is still primary; API is layered on for bootstrap convenience
 
 ### 12. **OpenAPI Generation** (`cmd-generate-openapi.md`)
-- **Purpose**: Build-time OpenAPI specification generation via AST analysis
-- **Key Features**: Route discovery, type introspection, OpenAPI 3.0 spec generation
-- **Migration**: Use kubebuilder for CRD schemas; adapt generator for webhook schemas
+- **Purpose**: Documentation generation for the convenience API and resource contracts
+- **Key Features**: Build-time schema generation and documentation alignment
+- **Direction**: Align generated docs with the new product-first API surface
 
 ## Supporting Domains
 
 ### 13. **Documentation** (`docs.md`)
-- **Purpose**: Swagger UI and OpenAPI specification serving
-- **Key Features**: Protocol detection, theme support, static file serving
-- **Migration**: Remove HTTP docs; use Kubernetes-native documentation (`kubectl explain`)
+- **Purpose**: Serve useful docs for the convenience API and product contract
+- **Key Features**: API docs, examples, and operational guidance
+- **Direction**: Keep docs useful; do not assume all HTTP-facing documentation should disappear
 
 ### 14. **Validation** (`validation.md`)
-- **Purpose**: RFC-compliant DNS and domain name validation utilities
-- **Key Features**: FQDN validation, domain validation, public package (pkg/)
-- **Migration**: Maintain package; use in validating webhooks; generate OpenAPI schema
+- **Purpose**: DNS and domain validation utilities
+- **Key Features**: FQDN validation, nested hostname support, reusable validation logic
+- **Direction**: Reuse across CRDs, API validation, and controller logic
 
 ## Common Migration Patterns
 
-### 1. **CRD-Based State Management**
-- Replace file-based storage with CRD storage in etcd
-- CRDs become the source of truth
-- Automatic persistence and versioning via Kubernetes
+### 1. **CRD-Based Durable State**
+- CRDs remain the source of truth
+- Generated runtime artifacts should be derived from CRD state
+- API requests should create the same durable resources as direct CRD workflows
 
 ### 2. **Controller Reconciliation**
-- Replace HTTP handlers and background processes with controllers
-- Use controller-runtime's RequeueAfter for polling
-- Watch CRDs and reconcile state
+- Controllers own authoritative DNS, shared SAN cert state, and publishing runtime artifacts
+- Split-DNS automation should be handled by bootstrap and repair logic, not every publish reconcile
 
 ### 3. **ConfigMap/Secret Storage**
-- Move configuration to Kubernetes-native resources
-- ConfigMaps for non-sensitive data
-- Secrets for sensitive data (API keys, tokens)
+- ConfigMaps for operator and runtime defaults
+- Secrets for certificate providers, Tailscale admin access, and other sensitive inputs
 
-### 4. **Webhook Validation**
-- Use validating/mutating webhooks for complex validation
-- OpenAPI schema for basic format validation
-- Webhooks for business logic validation
+### 4. **Validation**
+- Use schema, API validation, and controller checks together
+- Validate full hostnames, nested labels, and product-level publishing constraints
 
-### 5. **Status Subresources**
-- Use CRD status for health and state information
-- Status conditions for component health
-- Resource metadata for information
-
-### 6. **Native Networking**
-- Replace custom firewall with NetworkPolicy resources
-- Use Kubernetes Service ports for policy definition
-- No privileged container requirements
-
-## Architecture Patterns Identified
-
-1. **Manager-Based Patterns**: Certificate, Proxy, Firewall domains use manager objects for lifecycle management
-2. **Service-Based Patterns**: DNS domain uses a service layer for business logic
-3. **Handler Registry**: API domain uses centralized handler registration
-4. **Singleton Patterns**: Configuration and Logging use singleton instances
-5. **Client-Based Integration**: Tailscale domain uses API client pattern
-6. **Utility Functions**: Validation domain provides reusable utility functions
-
-## Document Structure
-
-All research documents follow a consistent structure:
-
-1. **Executive Summary**: High-level overview of the domain
-2. **Architecture Overview**: Current architecture pattern with diagrams
-3. **Core Components**: Detailed component breakdown
-4. **Data Flow**: Request/response and operation flows
-5. **CRD Mapping Considerations**: Proposed CRD structures and reconciliation logic
-6. **Key Migration Considerations**: Step-by-step migration guidance
-7. **Testing Strategy**: Current and target testing approaches
-8. **Summary**: Key takeaways and migration highlights
+### 5. **Status and Operational Feedback**
+- Status must explain whether DNS, HTTPS, cert, and split-DNS are actually ready
+- Browser success is a more meaningful acceptance signal than resource creation alone
 
 ## Key Takeaways
 
-- **Kubernetes-Native Approach**: All domains migrate to Kubernetes-native patterns (CRDs, controllers, ConfigMaps, Secrets)
-- **Separation of Concerns**: Clear separation between resource management (CRDs) and infrastructure (controllers)
-- **Declarative Configuration**: Move from imperative HTTP APIs to declarative CRD-based configuration
-- **State Management**: etcd replaces file-based storage for all state
-- **Validation**: Multi-layer validation (OpenAPI schema + webhooks + controller validation)
-- **Observability**: Kubernetes probes and CRD status replace custom health checks
-
-## Next Steps
-
-1. Review individual domain documents for detailed migration plans
-2. Design CRD schemas based on proposed structures
-3. Implement controllers using controller-runtime
-4. Set up webhook infrastructure for validation
-5. Migrate configuration to ConfigMaps and Secrets
-6. Replace file storage with CRD-based state management
+- The internal publishing product is the design center.
+- Device discovery is no longer a product requirement.
+- Shared explicit SAN management is a core feature because nested hostnames are required.
+- Split-DNS is required for v1, but only as bootstrap and repair automation.
+- The convenience API remains important because humans and agents need a fast bootstrap path.
 

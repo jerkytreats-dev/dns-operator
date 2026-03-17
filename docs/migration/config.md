@@ -55,11 +55,9 @@ dns:
 tailscale:
   api_key: "tskey-api-..."
   tailnet: "example.tailscale.com"
-
-device:
-  storage:
-    path: "data/devices.json"
-    backup_count: 3
+  dns:
+    zone: "internal.jerkytreats.dev"
+    mode: "repair"
 
 proxy:
   enabled: true
@@ -115,7 +113,7 @@ Separate your configuration into two categories:
 - DNS configuration (domain, paths, timeouts)
 - Logging configuration
 - Proxy configuration
-- Device storage paths
+- Tailscale split-DNS defaults
 - Certificate provider settings (excluding tokens)
 
 ### Step 2: Create Kubernetes Secrets
@@ -178,10 +176,10 @@ data:
         restart_timeout: "30s"
         health_check_retries: 5
 
-    device:
-      storage:
-        path: "data/devices.json"
-        backup_count: 3
+    tailscale:
+      dns:
+        zone: "internal.jerkytreats.dev"
+        mode: "repair"
 
     proxy:
       enabled: true

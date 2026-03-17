@@ -1,49 +1,49 @@
-# Phase 4: Tailscale Delivery Slice
+# Phase 4: Split-DNS Bootstrap and Repair
 
 ## Goal
 
-Move device discovery and IP resolution into Kubernetes resources and controller status.
+Make sure Tailscale clients resolve `internal.jerkytreats.dev` against the correct authoritative nameserver endpoint, even when that endpoint changes.
 
 ## Scope
 
-- Implement the `TailscaleDevice` controller.
-- Replace file backed device state with resource status.
-- Resolve `DNSRecord` targets through `TailscaleDevice` references.
-- Define polling, backoff, and rate limit behavior for the Tailscale API.
+- Implement the `TailnetDNSConfig` controller or equivalent bootstrap/repair automation path.
+- Manage Tailscale restricted nameserver configuration for `internal.jerkytreats.dev`.
+- Define drift detection, rerun safety, and a manual break-glass path.
+- Keep split-DNS management outside the hot path for every `PublishedService` reconcile.
 
 ## Current Reference Inputs
 
-The current export stores Tailscale device state in `devices.json` as a simple list of name, Tailscale IP, and description values. It does not include online state in the persisted data.
+The current split-DNS configuration is managed manually in the Tailscale admin portal rather than by the application itself. The internal zone currently points at the old authoritative nameserver IP, and that endpoint will change during migration.
 
-The current config also enables polling with an interval of `1h`.
+This means split-DNS must be treated as required platform automation, not as an optional post-cutover task.
 
 ## Deliverables
 
-- `TailscaleDevice` reconciler with periodic requeue behavior.
-- `Secret` based credential handling for Tailscale API access.
-- Status fields for current device id, current IP, sync time, and failures.
-- `DNSRecord` integration that can resolve device based targets.
+- `TailnetDNSConfig` reconcile or repair path with idempotent behavior.
+- `Secret` based credential handling for Tailscale admin access.
+- Status fields for configured nameserver, last apply time, and detected drift.
+- Operational guidance for bootstrap, repair, and break-glass manual recovery.
 
 ## Controller Responsibilities
 
-- Watch `TailscaleDevice` resources.
-- Poll the Tailscale API on a controlled schedule.
-- Update status without writing separate persistence files.
-- Surface offline, missing, and rate limited states clearly.
-- Trigger `DNSRecord` reconciliation when device IP changes affect records.
+- Watch `TailnetDNSConfig` resources.
+- Configure restricted nameserver settings for the managed internal zone.
+- Detect drift between desired and effective split-DNS state.
+- Reapply safely when the authoritative nameserver endpoint changes.
+- Surface auth failures, API failures, and drift clearly.
 
 ## Design Notes
 
-- A `TailscaleDevice` should not create `DNSRecord` resources automatically.
-- Device polling policy belongs in the resource spec or shared operator config.
-- Reference identity should be stable enough to survive IP changes.
-- Import logic should not assume source data contains online status.
-- The first migration pass should preserve imported descriptions and names even when they need hostname normalization later.
+- Split-DNS is required in v1, but it should be bootstrap and repair automation only.
+- Successful service publishing should not require rewriting tailnet DNS settings on every service update.
+- The nameserver endpoint should come from durable desired state, not from hand-maintained portal notes.
+- A manual recovery path must exist in case Tailscale automation is unavailable.
+- Device discovery is intentionally out of scope for this phase.
 
 ## Exit Criteria
 
-- `TailscaleDevice` status reflects current API state.
-- `DNSRecord` resources can resolve a target from device status.
-- No JSON device store remains in the operator path.
-- Error handling covers missing credentials, missing devices, and API throttling.
-- Import from the current `devices.json` format works without lossy field drops.
+- A fresh install can configure split-DNS for `internal.jerkytreats.dev`.
+- A changed authoritative nameserver endpoint can be repaired safely and rerun idempotently.
+- Status shows whether split-DNS is configured, stale, or broken.
+- Error handling covers missing credentials, Tailscale API failure, and partial configuration drift.
+- Production cutover is blocked if clients inside Tailscale cannot resolve the internal zone through the intended nameserver.

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Define how `dns-operator` is delivered into the cluster through Argo while keeping Argo focused on install time artifacts and the operator focused on runtime managed state.
+Define how `dns-operator` is delivered into the cluster through Argo while keeping Argo focused on install-time artifacts and the operator focused on runtime managed state for internal publishing.
 
 ## Recommended Model
 
@@ -10,7 +10,7 @@ Define how `dns-operator` is delivered into the cluster through Argo while keepi
 - This repository contains the runtime install artifacts that Argo applies.
 - The cluster runs a published container image for `dns-operator`.
 - Argo reads deploy manifests from this repository, but does not build the image and does not execute source code.
-- The operator owns generated runtime resources after installation.
+- The operator owns generated authoritative DNS, HTTPS runtime, and certificate artifacts after installation.
 
 ## Repository Split
 
@@ -21,7 +21,7 @@ The infra repository should own:
 - the Argo `Application` manifest for `dns-operator`
 - cluster specific ordering through sync waves
 - shared secret provider applications
-- optional Git managed custom resources such as `DNSRecord` and `Certificate` later on
+- optional Git managed custom resources such as `PublishedService`, `DNSRecord`, `CertificateBundle`, and `TailnetDNSConfig`
 
 ### `dns-operator` repository
 
@@ -31,8 +31,11 @@ This repository should own:
 - RBAC
 - `ServiceAccount`
 - manager `Deployment`
+- API `Service` and any optional API deployment wiring
 - service and monitoring manifests
 - static operator config defaults
+- runtime manifests for CoreDNS and Caddy
+- bootstrap or repair jobs for split-DNS automation if those are separate from the manager
 - cluster overlays for image tags and deployment settings
 
 ## Directory Shape
@@ -47,6 +50,12 @@ deploy/
       crds/
       rbac/
       manager-deployment.yaml
+      api-service.yaml
+      runtime/
+        coredns/
+        caddy/
+      bootstrap/
+        tailnet-dns-repair-job.yaml
       service.yaml
       kustomization.yaml
     overlays/
@@ -74,8 +83,10 @@ Argo should own:
 - CRD installation
 - RBAC and service accounts
 - operator deployment
+- API service and ingress-free cluster access for the convenience API
 - static config and secret references
 - optional bootstrap custom resources that are intentionally Git managed
+- optional bootstrap or repair jobs that are intentionally rerun by operators
 
 Argo should not own:
 
@@ -84,12 +95,14 @@ Argo should not own:
 - issued certificate `Secret` output
 - status subresources
 - any generated child resources that the operator reconciles and updates continuously
+- the moment-to-moment contents of split-DNS state in Tailscale
 
 ## Secret Flow
 
 - Secret provider applications should sync before `dns-operator`.
 - `dns-operator` should reference Kubernetes `Secret` objects, not raw values.
-- The current plain text Tailscale and Cloudflare credentials must migrate into `Secret` objects before cutover.
+- The current plain text Tailscale admin and Cloudflare credentials must migrate into `Secret` objects before cutover.
+- Split-DNS automation credentials should be scoped separately from certificate provider credentials when feasible.
 
 ## Image Flow
 
@@ -105,7 +118,9 @@ Recommended ordering:
 
 1. secret provider and secret material
 2. `dns-operator` install artifacts
-3. optional Git managed `DNSRecord`, `TailscaleDevice`, `Certificate`, and `ProxyRule` resources
+3. optional Git managed `CertificateBundle` and `TailnetDNSConfig` resources
+4. optional Git managed `PublishedService` and `DNSRecord` resources
+5. optional bootstrap or repair execution for split-DNS when required by install or cutover
 
 ## Custom Resource Ownership
 
@@ -113,8 +128,9 @@ Two modes can coexist over time:
 
 - migration mode, where import jobs create resources from the current reference export
 - GitOps mode, where selected custom resources are committed in the infra repository and applied by Argo
+- API convenience mode, where the API creates or updates the same durable resources for fast bootstrap
 
-The key boundary is that Argo may create desired resources, but the operator owns their status and any generated runtime artifacts.
+The key boundary is that Argo or the API may create desired resources, but the operator owns their status and any generated runtime artifacts.
 
 ## First Cluster Target
 
@@ -125,4 +141,4 @@ The first target should be a single cluster overlay with:
 - fixed image tag pinning
 - no `Helm` packaging layer
 
-This keeps the first deployment path simple while the operator reaches parity with the current reference runtime.
+This keeps the first deployment path simple while the operator reaches parity with the current internal publishing workflow.

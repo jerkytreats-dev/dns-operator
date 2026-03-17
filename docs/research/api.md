@@ -1,231 +1,115 @@
-# API Domain Reference Architecture
+# API Domain Research
 
 ## Executive Summary
 
-The API domain (`reference/internal/api/`) provides the HTTP layer for the DNS Manager service. It implements a RESTful API with route registration, request handling, and response management. The domain follows a modular architecture with centralized route registry and handler management.
+The API should remain part of the product. It is not just migration compatibility for the legacy DNS manager; it is the fast bootstrap surface that lets humans and agents publish working internal services without hand-authoring CRDs first.
 
-## Architecture Overview
+The target shape is:
 
-### Current Architecture Pattern
+- CRDs remain the durable source of truth
+- the API creates or updates the same durable resources
+- the main API concept is internal publishing, not raw record manipulation
 
-The API domain follows a **modular handler registry pattern**:
+## Product Role
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    HandlerRegistry                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ RecordHandler│  │ HealthHandler│  │ DeviceHandler│      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-│  ┌──────────────┐  ┌──────────────┐                        │
-│  │ DocsHandler  │  │ RouteRegistry│                        │
-│  └──────────────┘  └──────────────┘                        │
-└─────────────────────────────────────────────────────────────┘
-```
+The API exists to support workflows like:
 
-**Key Characteristics:**
-- Centralized handler registry (`HandlerRegistry`)
-- Route registration via `RouteInfo` structs
-- Modular handler initialization
-- Dependency injection for handlers
-- HTTP ServeMux for routing
+1. start a small service on a node
+2. call one endpoint
+3. get a working hostname under `internal.jerkytreats.dev`
+4. have it resolve only inside Tailscale
+5. have it load in a browser over HTTPS
 
-## Core Components
+That means the API should be shaped around `PublishedService`, not around low-level DNS, proxy, and cert operations as separate user concepts.
 
-### 1. Handler Registry
+## Recommended API Surface
 
-**Location:** `internal/api/handler/handler.go`, `internal/api/handler/registry.go`
+### Primary operations
 
-**Responsibilities:**
-- Centralized management of all HTTP handlers
-- Handler initialization with dependencies
-- Route registration and HTTP ServeMux management
-- Handler lifecycle coordination
+- create or update a `PublishedService`
+- inspect publish readiness and effective URL
+- list published services
+- remove or pause a published service
 
-**Key Operations:**
-```go
-NewHandlerRegistry(dnsManager, dnsChecker, syncManager, proxyManager, tailscaleClient, certificateManager) (*HandlerRegistry, error)
-RegisterHandlers(mux *http.ServeMux)
-GetServeMux() *http.ServeMux
-```
+### Secondary operations
 
-**Dependencies:**
-- DNS Manager (CoreDNS)
-- Health Checker
-- Sync Manager
-- Proxy Manager
-- Tailscale Client
-- Certificate Manager
+- inspect authoritative DNS state
+- inspect certificate bundle state
+- trigger or inspect split-DNS repair
 
-### 2. Record Handler
+### Example request shape
 
-**Location:** `internal/api/handler/record.go`
-
-**Responsibilities:**
-- DNS record creation via `/add-record` endpoint
-- DNS record listing via `/list-records` endpoint
-- DNS record removal via `/remove-record` endpoint
-- Request validation and normalization
-- Integration with certificate manager for SAN management
-
-**Key Operations:**
-```go
-AddRecord(w http.ResponseWriter, r *http.Request)
-ListRecords(w http.ResponseWriter, r *http.Request)
-RemoveRecord(w http.ResponseWriter, r *http.Request)
-```
-
-**Request/Response Flow:**
-1. HTTP request received
-2. Request validation and normalization
-3. Record service orchestration (DNS + Proxy)
-4. Certificate SAN management (if applicable)
-5. HTTP response with status code
-
-### 3. Route Registry
-
-**Location:** `internal/api/handler/registry.go`, `internal/api/types/route.go`
-
-**Responsibilities:**
-- Centralized route registration
-- Route metadata management (`RouteInfo`)
-- Route discovery for OpenAPI generation
-- Module-based route organization
-
-**RouteInfo Structure:**
-```go
-type RouteInfo struct {
-    Path        string
-    Method      string
-    Handler     http.HandlerFunc
-    Module      string
-    Description string
-    RequestType interface{}
-    ResponseType interface{}
+```json
+{
+  "hostname": "grafana.internal.jerkytreats.dev",
+  "publishMode": "httpsProxy",
+  "backend": {
+    "address": "100.70.110.111",
+    "port": 80,
+    "protocol": "http"
+  },
+  "auth": {
+    "mode": "none"
+  }
 }
 ```
 
-**Key Operations:**
-```go
-RegisterRoute(route RouteInfo)
-GetRegisteredRoutes() []RouteInfo
-```
+## Architectural Direction
 
-### 4. API Types
+### Current pattern
 
-**Location:** `internal/api/types/route.go`
+The legacy API is synchronous and imperative:
 
-**Responsibilities:**
-- Route metadata structures
-- Type definitions for API layer
-- Request/response type definitions
+- accept a request
+- write files
+- restart or reload runtime components
+- return success immediately
 
-## Data Flow
+### Target pattern
 
-### Current Flow: HTTP Request → DNS Record Creation
+The new API should be asynchronous over durable state:
 
-```
-1. HTTP POST /add-record
-   ↓
-2. HandlerRegistry routes to RecordHandler
-   ↓
-3. RecordHandler.AddRecord()
-   ├─→ Request validation
-   ├─→ RecordService.CreateRecord()
-   │   ├─→ DNSManager.AddRecord()
-   │   ├─→ ProxyManager.AddRule()
-   │   └─→ CertificateManager.AddDomainToSAN()
-   └─→ HTTP 201 Created response
-```
+- accept a publish request
+- create or update a CRD such as `PublishedService`
+- return accepted plus a durable resource reference
+- let controllers drive DNS, certificate, and runtime convergence
+- expose readiness via status or API reads
 
-## CRD Mapping Considerations
+## Resource Mapping
 
-### Target Architecture: Kubernetes API Server
+- API publish request -> `PublishedService`
+- API manual DNS request -> `DNSRecord`
+- API certificate inspection -> `CertificateBundle`
+- API split-DNS repair request -> `TailnetDNSConfig` repair action or equivalent
 
-**Option 1: Native Kubernetes API**
-- Use Kubernetes API server directly
-- CRDs managed via `kubectl` or Kubernetes client libraries
-- No HTTP API layer needed
+## Design Constraints
 
-**Option 2: API Server with CRD Backend**
-- Maintain REST API for convenience
-- API server creates/updates CRDs
-- Kubernetes API server as backend
-- Provides backward compatibility
+- The API must not become a second source of truth.
+- API-created resources and Git-managed resources must reconcile identically.
+- The API should preserve the “spin up quickly” workflow for agents.
+- Zero app auth as the default should be expressible directly in the publish contract.
+- Browser success is the real outcome, not just resource creation.
 
-**Option 3: Webhook-based API**
-- Validating/Mutating webhooks for CRD operations
-- Custom API server for additional endpoints
-- Kubernetes-native validation
+## Operational Implications
 
-**Recommended Approach:**
-- **Option 1** for primary interface (Kubernetes-native)
-- **Option 2** as optional convenience layer if needed
-- Webhooks for validation and mutation
-
-## Key Migration Considerations
-
-### 1. Handler to Controller Mapping
-
-**Current:** HTTP handlers process requests synchronously
-**Target:** Controllers watch CRDs and reconcile state
-
-**Mapping:**
-- `RecordHandler.AddRecord()` → `DNSRecordController` reconciliation
-- `RecordHandler.ListRecords()` → `kubectl get dnsrecords`
-- `RecordHandler.RemoveRecord()` → `kubectl delete dnsrecord`
-
-### 2. Route Registration
-
-**Current:** Route registration via `RouteInfo` structs
-**Target:** Kubernetes API endpoints or webhook endpoints
-
-**Migration:**
-- Remove HTTP route registration
-- Use Kubernetes API server endpoints
-- Optional: Maintain route registry for webhook endpoints
-
-### 3. Request Validation
-
-**Current:** Validation in handlers
-**Target:** CRD validation via OpenAPI schema or webhooks
-
-**Migration:**
-- Move validation to CRD OpenAPI schema
-- Use validating webhooks for complex validation
-- Remove handler-level validation
-
-### 4. Response Format
-
-**Current:** JSON HTTP responses
-**Target:** Kubernetes API responses or CRD status
-
-**Migration:**
-- Replace HTTP responses with CRD status updates
-- Use Kubernetes API response format
-- Maintain JSON format for webhook responses
+- API docs remain useful and should not be treated as legacy clutter.
+- API responses should surface durable resource identifiers and current readiness.
+- API validation should align with CRD validation to avoid drift.
+- The API should expose enough status for agents to decide whether a service is really ready.
 
 ## Testing Strategy
 
-### Current Testing Approach
-- HTTP handler unit tests
-- Request/response mocking
-- Integration tests with test HTTP server
-
-### Target Testing Approach
-- Controller unit tests with fake client
-- CRD validation tests
-- Webhook validation tests
-- Integration tests with testenv
+- API request validation tests
+- API-to-CRD mapping tests
+- controller convergence tests after API writes
+- end-to-end publish tests that validate browser-facing readiness
 
 ## Summary
 
-The API domain provides the HTTP interface for DNS management operations. Migration to Kubernetes will:
+The API should stay. The change is not “remove the API because Kubernetes exists.” The change is:
 
-1. **Replace HTTP handlers with controllers** - Controllers watch CRDs instead of handling HTTP requests
-2. **Use Kubernetes API server** - CRDs managed via Kubernetes API instead of custom HTTP endpoints
-3. **Optional API server** - Maintain REST API as convenience layer if needed
-4. **Webhook validation** - Use validating/mutating webhooks for request validation
-
-The route registry and handler patterns can be adapted for webhook endpoints if maintaining an HTTP API layer is desired.
+1. keep CRDs as durable state
+2. keep the API as a first-class convenience interface
+3. center both on `PublishedService` and internal publishing outcomes
 
 
