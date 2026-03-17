@@ -14,7 +14,7 @@ metadata:
   namespace: dns-operator-system
 type: Opaque
 stringData:
-  api-key: tskey-api-example
+  api-key: example-tailnet-api-key
 ```
 
 ### Cloudflare API token
@@ -27,7 +27,7 @@ metadata:
   namespace: dns-operator-system
 type: Opaque
 stringData:
-  api-token: example-token
+  api-token: example-dns-provider-token
 ```
 
 ## `PublishedService`
@@ -36,15 +36,15 @@ stringData:
 apiVersion: publish.jerkytreats.dev/v1alpha1
 kind: PublishedService
 metadata:
-  name: grafana
+  name: app
   namespace: dns-operator-system
   labels:
     publish.jerkytreats.dev/certificate-bundle: internal-shared
 spec:
-  hostname: grafana.internal.jerkytreats.dev
+  hostname: app.internal.example.test
   publishMode: httpsProxy
   backend:
-    address: 100.70.110.111
+    address: 192.0.2.10
     port: 80
     protocol: http
   tls:
@@ -59,15 +59,15 @@ spec:
 apiVersion: publish.jerkytreats.dev/v1alpha1
 kind: PublishedService
 metadata:
-  name: api-chat
+  name: api-portal
   namespace: dns-operator-system
   labels:
     publish.jerkytreats.dev/certificate-bundle: internal-shared
 spec:
-  hostname: api.chat.internal.jerkytreats.dev
+  hostname: api.portal.internal.example.test
   publishMode: httpsProxy
   backend:
-    address: 100.70.110.111
+    address: 192.0.2.10
     port: 8000
     protocol: http
   tls:
@@ -82,15 +82,15 @@ spec:
 apiVersion: publish.jerkytreats.dev/v1alpha1
 kind: PublishedService
 metadata:
-  name: sunshine
+  name: media
   namespace: dns-operator-system
   labels:
     publish.jerkytreats.dev/certificate-bundle: internal-shared
 spec:
-  hostname: sunshine.internal.jerkytreats.dev
+  hostname: media.internal.example.test
   publishMode: httpsProxy
   backend:
-    address: 100.70.110.111
+    address: 192.0.2.10
     port: 47990
     protocol: https
     transport:
@@ -110,11 +110,11 @@ metadata:
   name: ns-record
   namespace: dns-operator-system
 spec:
-  hostname: ns.internal.jerkytreats.dev
+  hostname: ns1.internal.example.test
   type: A
   ttl: 300
   values:
-    - 100.72.130.7
+    - 198.51.100.53
 ```
 
 ## `CertificateBundle`
@@ -140,7 +140,7 @@ spec:
         name: cloudflare-credentials
         key: api-token
   secretTemplate:
-    name: internal-jerkytreats-dev-shared-tls
+    name: internal-example-test-shared-tls
   renewBefore: 720h
 ```
 
@@ -153,10 +153,10 @@ metadata:
   name: internal-zone
   namespace: dns-operator-system
 spec:
-  zone: internal.jerkytreats.dev
-  tailnet: tail1cfaab.ts.net
+  zone: internal.example.test
+  tailnet: example.ts.net
   nameserver:
-    address: 100.72.130.7
+    address: 198.51.100.53
   auth:
     secretRef:
       name: tailscale-admin-credentials

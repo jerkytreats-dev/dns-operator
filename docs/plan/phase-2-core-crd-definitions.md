@@ -2,7 +2,7 @@
 
 ## Goal
 
-Define a CRD-first contract that matches the real product: publish internal services under `internal.jerkytreats.dev`, keep browser behavior correct under HTTPS/HSTS, and preserve an API convenience layer for fast bootstrap.
+Define a CRD-first contract that matches the real product: publish internal services under `internal.example.test`, keep browser behavior correct under HTTPS/HSTS, and preserve an API convenience layer for fast bootstrap.
 
 ## Scope
 

@@ -53,10 +53,10 @@ dns:
     health_check_retries: 5
 
 tailscale:
-  api_key: "tskey-api-..."
+  api_key: "example-tailnet-api-key"
   tailnet: "example.tailscale.com"
   dns:
-    zone: "internal.jerkytreats.dev"
+    zone: "internal.example.test"
     mode: "repair"
 
 proxy:
@@ -75,7 +75,7 @@ certificate:
   provider: "lego"
   email: "admin@example.com"
   domain: "example.com"
-  cloudflare_api_token: "CF_API_TOKEN"
+  cloudflare_api_token: "example-dns-provider-token"
   dns_resolvers:
     - "8.8.8.8:53"
     - "1.1.1.1:53"
@@ -128,8 +128,8 @@ metadata:
   namespace: dns-operator
 type: Opaque
 stringData:
-  tailscale-api-key: "tskey-api-..."
-  cloudflare-api-token: "CF_API_TOKEN"
+  tailscale-api-key: "example-tailnet-api-key"
+  cloudflare-api-token: "example-dns-provider-token"
 ```
 
 **Important:** Use `stringData` for plain text values (Kubernetes will base64 encode them automatically), or use `data` with base64-encoded values.
@@ -178,7 +178,7 @@ data:
 
     tailscale:
       dns:
-        zone: "internal.jerkytreats.dev"
+        zone: "internal.example.test"
         mode: "repair"
 
     proxy:
@@ -369,10 +369,10 @@ The operator should support environment variable overrides with the following ma
 
 | Config Key | Environment Variable | Example |
 |------------|---------------------|---------|
-| `tailscale.api_key` | `TAILSCALE_API_KEY` | `tskey-api-...` |
+| `tailscale.api_key` | `TAILSCALE_API_KEY` | `example-tailnet-api-key` |
 | `tailscale.tailnet` | `TAILSCALE_TAILNET` | `example.tailscale.com` |
 | `dns.domain` | `DNS_DOMAIN` | `example.com` |
-| `certificate.cloudflare_api_token` | `CLOUDFLARE_API_TOKEN` | `CF_API_TOKEN` |
+| `certificate.cloudflare_api_token` | `CLOUDFLARE_API_TOKEN` | `example-dns-provider-token` |
 | `logging.level` | `LOG_LEVEL` | `info` |
 
 ### Precedence Order

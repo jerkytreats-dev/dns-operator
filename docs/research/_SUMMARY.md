@@ -6,10 +6,10 @@ The `docs/research/` directory should be read through the lens of the product, n
 
 The product is:
 
-- an authoritative nameserver for `internal.jerkytreats.dev`
+- an authoritative nameserver for `internal.example.test`
 - reachable only inside the Tailscale network via split-DNS
 - able to publish browser-facing internal services over valid HTTPS
-- able to support nested hostnames such as `bar.foo.internal.jerkytreats.dev`
+- able to support nested hostnames such as `bar.foo.internal.example.test`
 - based on shared explicit SAN certificate management rather than wildcard assumptions
 - centered on CRD-first durable state with a convenience API for fast bootstrap
 
@@ -26,7 +26,7 @@ The product is:
 - **Direction**: Model certificate ownership around a shared bundle, because wildcard is not the target model
 
 ### 3. **DNS Domain** (`dns.md`)
-- **Purpose**: Authoritative DNS and zone rendering for `internal.jerkytreats.dev`
+- **Purpose**: Authoritative DNS and zone rendering for `internal.example.test`
 - **Key Features**: Full-hostname records, nested labels, zone aggregation, CoreDNS integration
 - **Direction**: Keep `DNSRecord` as the lower-level primitive while projecting `PublishedService` into DNS
 

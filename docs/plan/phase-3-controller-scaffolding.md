@@ -2,7 +2,7 @@
 
 ## Goal
 
-Land the first end to end controller path for authoritative DNS of `internal.jerkytreats.dev`.
+Land the first end to end controller path for authoritative DNS of `internal.example.test`.
 
 ## Scope
 
@@ -14,7 +14,7 @@ Land the first end to end controller path for authoritative DNS of `internal.jer
 
 ## Current Reference Inputs
 
-The current export shows one live zone with mixed direct records, nested labels, and names that later front proxied services. Migration logic for this phase should consume:
+The current export shows a live zone with mixed direct records, nested labels, and names that later front proxied services. Migration logic for this phase should consume:
 
 - `config.yaml` for the managed domain
 - the current zone file for current record data

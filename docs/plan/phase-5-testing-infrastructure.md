@@ -2,7 +2,7 @@
 
 ## Goal
 
-Manage one shared certificate set for published HTTPS hosts under `internal.jerkytreats.dev` so browser access succeeds without wildcard assumptions.
+Manage one shared certificate set for published HTTPS hosts under `internal.example.test` so browser access succeeds without wildcard assumptions.
 
 ## Scope
 

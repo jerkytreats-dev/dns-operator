@@ -2,18 +2,19 @@
 
 ## Executive Summary
 
-This document examines the reference DNS service architecture as it relates to porting functionality to a Kubernetes CRD-Reconciler pattern using Kubebuilder and controller-runtime. The reference service is a unified containerized DNS management solution that provides automated DNS record management, SSL certificates, reverse proxy configuration, and Tailscale integration.
+This document examines the reference DNS service architecture as it relates to porting functionality to a Kubernetes CRD-reconciler pattern using Kubebuilder and controller-runtime. It is a reference-analysis document, while the authoritative implementation plan lives under `docs/plan/`. Target-state terminology in this file is aligned to the current product model: `PublishedService`, `DNSRecord`, `CertificateBundle`, and `TailnetDNSConfig`.
 
 ## Architectural Decisions
 
-The following decisions have been made for the dns-operator implementation:
+The following decisions have been made for the `dns-operator` implementation:
 
-1. **One CRD per DNS Record** - Each DNS record will be represented as a separate DNSRecord CRD resource
-2. **Separate Controllers with Boundaries** - Multiple focused controllers (DNSRecordController, CertificateController, ProxyRuleController, TailscaleDeviceController) with clear separation of concerns
-3. **ConfigMap Zone Management** - DNS zone files will be managed via Kubernetes ConfigMaps rather than direct file system access
-4. **Automatic SAN Management** - Certificate controller will automatically manage Subject Alternative Names when DNSRecords reference certificates
-5. **ConfigMap Caddyfile** - Caddy reverse proxy configuration will be generated and stored in ConfigMaps
-6. **TailscaleDevice CRD** - TailscaleDevice CRD will create references to Tailscale devices, but will NOT automatically create DNSRecord resources (manual DNSRecord creation required)
+1. **One CRD per DNS Record** - Each lower-level authoritative DNS record will be represented as a separate `DNSRecord` resource
+2. **Product-Facing Publishing Resource** - `PublishedService` is the primary user-facing resource for internal publishing, while `DNSRecord` remains the lower-level primitive
+3. **Focused Controllers with Clear Ownership** - Reconciliation is split across DNS publication, certificate management, HTTPS runtime rendering, and split-DNS repair concerns
+4. **ConfigMap Zone Management** - Authoritative zone data will be rendered into Kubernetes `ConfigMap` resources rather than managed through direct filesystem writes
+5. **Shared SAN Certificate Management** - `CertificateBundle` will manage shared explicit SAN coverage for published HTTPS hosts
+6. **Split-DNS Bootstrap and Repair** - `TailnetDNSConfig` will manage Tailscale split-DNS bootstrap and repair, not device discovery
+7. **API Convenience Layer Preserved** - The HTTP API remains a convenience layer over durable CRDs rather than the primary source of truth
 
 ## Architecture Overview
 
@@ -43,22 +44,26 @@ The reference DNS service follows a **monolithic API-driven architecture**:
 
 ### Target Architecture Pattern
 
-The target architecture will follow **Kubernetes CRD-Reconciler pattern**:
+The target architecture will follow a **Kubernetes CRD-reconciler pattern**:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Kubernetes Cluster                        │
 │  ┌──────────────┐         ┌──────────────┐                  │
-│  │ DNSRecord    │────────▶│ Reconciler   │                  │
-│  │ CRD          │         │              │                  │
+│  │ Published-   │────────▶│ Controllers  │                  │
+│  │ Service      │         │ + Reconcilers│                  │
 │  └──────────────┘         └──────┬───────┘                  │
-│                                  │                           │
-│                          ┌───────┴───────┐                   │
-│                          │               │                   │
-│                    ┌─────▼─────┐   ┌─────▼─────┐            │
-│                    │ CoreDNS   │   │  Caddy    │            │
-│                    │ Operator  │   │ Operator  │            │
-│                    └───────────┘   └───────────┘            │
+│         ▲                        │                           │
+│         │                 ┌──────┴──────────┐                │
+│  ┌──────┴──────┐          │ Rendered State  │                │
+│  │ DNSRecord   │          │ ConfigMaps,     │                │
+│  │ Certificate │          │ Secrets, Status │                │
+│  │ Bundle,     │          └──────┬──────────┘                │
+│  │ TailnetDNS  │                 │                           │
+│  └─────────────┘           ┌─────▼─────┐   ┌─────▼─────┐     │
+│                            │ CoreDNS   │   │  Caddy    │     │
+│                            │ Runtime   │   │ Runtime   │     │
+│                            └───────────┘   └───────────┘     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,7 +72,8 @@ The target architecture will follow **Kubernetes CRD-Reconciler pattern**:
 - Event-driven reconciliation loops
 - Kubernetes-native state management (etcd)
 - Controller-runtime for resource watching and reconciliation
-- Separation of concerns across multiple controllers
+- Separation of concerns across multiple focused controllers
+- Durable desired state for publishing, DNS, certificates, and split-DNS repair
 
 ## Core Components Analysis
 
@@ -110,19 +116,21 @@ ListRecords(serviceName string) ([]Record, error)
 apiVersion: dns.jerkytreats.dev/v1alpha1
 kind: DNSRecord
 metadata:
-  name: webapp
+  name: webapp-a
   namespace: default
 spec:
-  name: webapp
-  domain: internal.example.test
+  hostname: webapp.internal.example.test
   type: A
-  targetIP: 100.64.1.5  # Or reference to TailscaleDevice
-  proxy:
-    enabled: true
-    targetPort: 8080
-    protocol: http
+  ttl: 300
+  values:
+    - 198.51.100.53
+  owner:
+    name: webapp
+    namespace: default
 status:
-  fqdn: app.internal.example.test
+  zoneConfigMapName: zone-internal-jerkytreats-dev
+  renderedValues:
+    - 198.51.100.53
   conditions:
     - type: Ready
       status: "True"
@@ -130,7 +138,7 @@ status:
 
 **Reconciliation Logic:**
 - Watch DNSRecord CRDs
-- On create/update: Write to CoreDNS zone file via ConfigMap or direct file mount
+- On create/update: Update rendered zone data via `ConfigMap`
 - On delete: Remove from zone file
 - Update status with current state
 - Handle conflicts and retries
@@ -145,8 +153,8 @@ status:
 - **ConfigMap-based Zone Management:** Store zone files in Kubernetes ConfigMaps
 - Use a single reconciler per zone that aggregates all DNSRecord resources for that zone
 - Store zone serial in ConfigMap annotation or separate ZoneStatus resource
-- Use owner references to track which DNSRecord owns which zone file entry
-- DNSRecordController will watch all DNSRecords and update the appropriate zone ConfigMap
+- Track direct `DNSRecord` ownership and `PublishedService`-derived records explicitly
+- `DNSRecord` reconciliation will update the appropriate zone `ConfigMap`
 
 ### 2. Certificate Management
 
@@ -181,24 +189,34 @@ StartRenewalLoop(domain string)
 **Proposed CRD Structure:**
 ```yaml
 apiVersion: certificate.jerkytreats.dev/v1alpha1
-kind: Certificate
+kind: CertificateBundle
 metadata:
-  name: internal-cert
+  name: internal-shared
 spec:
-  baseDomain: internal.example.test
-  provider: letsencrypt
-  challengeType: dns01
-  cloudflare:
-    apiTokenSecretRef:
-      name: cloudflare-token
-      key: token
-  sanDomains:
-    - app.internal.example.test
-    - api.internal.example.test
+  mode: sharedSAN
+  publishedServiceSelector:
+    matchLabels:
+      jerkytreats.dev/publish-mode: httpsProxy
+  additionalDomains:
+    - internal.example.test
+  issuer:
+    provider: letsencrypt
+    email: ops@example.com
+  challenge:
+    type: dns01
+    cloudflare:
+      apiTokenSecretRef:
+        name: cloudflare-credentials
+        key: api-token
+  secretTemplate:
+    name: internal-shared-tls
 status:
   state: Ready
-  certificateSecret:
-    name: internal-cert-tls
+  effectiveDomains:
+    - app.internal.example.test
+    - api.internal.example.test
+  certificateSecretRef:
+    name: internal-shared-tls
     namespace: default
   expiresAt: "2024-12-31T23:59:59Z"
   conditions:
@@ -207,29 +225,28 @@ status:
 ```
 
 **Reconciliation Logic:**
-- Watch Certificate CRDs
+- Watch `CertificateBundle` resources
+- Watch published HTTPS hosts when building the effective SAN set
 - On create/update: Trigger ACME certificate request/renewal
 - Monitor certificate expiration and auto-renew
-- Store certificates in Kubernetes Secrets
-- Update CoreDNS TLS configuration via ConfigMap or separate controller
+- Store certificates in Kubernetes `Secret` resources
+- Publish certificate references for CoreDNS and Caddy runtime consumption
 - Handle rate limiting and retries
 
 **Challenges:**
-1. **SAN Management:** Multiple DNSRecord resources may need the same certificate
-2. **Certificate Sharing:** Need to determine when to create new cert vs add to existing
+1. **SAN Management:** Multiple published HTTPS hosts may need the same certificate
+2. **Certificate Sharing:** Need to determine how shared SAN membership is derived and reviewed
 3. **Rate Limiting:** Let's Encrypt has strict rate limits
-4. **Secret Management:** Certificates stored as Kubernetes Secrets
+4. **Secret Management:** Certificates stored as Kubernetes `Secret` resources
 
 **Solutions (DECIDED):**
-- **Automatic SAN Management:** CertificateController will automatically manage SAN domains
-- DNSRecord can reference a Certificate via owner reference or label selector
-- When a DNSRecord references a Certificate, the CertificateController automatically adds the DNSRecord's FQDN to the certificate's SAN list
-- When a DNSRecord is deleted, the CertificateController automatically removes the FQDN from the certificate's SAN list
+- **Derived Shared SAN Management:** `CertificateBundle` will derive effective SAN membership from desired published HTTPS hosts plus any explicit additional domains
+- Shared SAN state remains visible and reviewable through `CertificateBundle` spec and status
 - Use exponential backoff and rate limit awareness
-- Store certificates in Secrets with proper labels for discovery
-- Certificate renewal triggered automatically when SAN list changes
+- Store certificates in `Secret` resources with deterministic naming and labels for discovery
+- Debounce renewal and issuance work when SAN membership changes
 
-### 3. Reverse Proxy Management
+### 3. HTTPS Publishing Runtime
 
 #### Current Implementation
 
@@ -255,52 +272,55 @@ RestoreFromStorage() error
 - Caddyfile generated from template with all active rules
 - Configuration reloaded via supervisord commands
 
-**CRD Mapping Considerations:**
-
-**Option 1: Separate ProxyRule CRD**
+**Target Resource Model:**
 ```yaml
-apiVersion: proxy.jerkytreats.dev/v1alpha1
-kind: ProxyRule
+apiVersion: publish.jerkytreats.dev/v1alpha1
+kind: PublishedService
 metadata:
-  name: webapp-proxy
+  name: webapp
 spec:
   hostname: app.internal.example.test
-  targetIP: 100.64.1.5
-  targetPort: 8080
-  protocol: http
-status:
-  state: Active
-```
-
-**Option 2: Embedded in DNSRecord (Current Pattern)**
-```yaml
-# DNSRecord with embedded proxy config
-spec:
-  proxy:
-    enabled: true
-    targetPort: 8080
+  publishMode: httpsProxy
+  backend:
+    address: 192.0.2.10
+    port: 8080
     protocol: http
+  tls:
+    mode: sharedSAN
+  auth:
+    mode: none
+status:
+  dnsRecordRef:
+    name: app-a
+    namespace: default
+  certificateBundleRef:
+    name: internal-shared
+    namespace: default
+  renderedConfigMapName: caddy-config
+  conditions:
+    - type: RuntimeReady
+      status: "True"
 ```
 
 **Reconciliation Logic:**
-- Watch ProxyRule CRDs (or DNSRecord with proxy enabled)
-- Generate Caddyfile from template with all active rules
-- Update Caddy ConfigMap with generated Caddyfile
+- Watch `PublishedService` resources with `publishMode=httpsProxy`
+- Generate Caddy configuration from the effective publishing state
+- Update Caddy `ConfigMap` with rendered config
 - Trigger Caddy reload (via admin API or sidecar container)
 - Handle rule conflicts and validation
 
 **Challenges:**
 1. **Caddy Integration:** Need to run Caddy as a separate pod or sidecar
 2. **Config Reload:** Caddy admin API or file watching mechanism
-3. **Rule Coordination:** Multiple ProxyRules need to be combined into single Caddyfile
-4. **State Persistence:** Rules need to survive pod restarts
+3. **Runtime Coordination:** Multiple published services need to be combined into one stable runtime config
+4. **State Persistence:** Desired runtime state needs to survive pod restarts without local files
 
 **Solutions (DECIDED):**
-- **ConfigMap Caddyfile:** Store generated Caddyfile in Kubernetes ConfigMap
-- Run Caddy as a DaemonSet or Deployment with ConfigMap mount
-- Use Caddy's file-based config with reload plugin watching the ConfigMap
-- Single ProxyRuleController that aggregates all ProxyRules into one Caddyfile ConfigMap
-- Store proxy rules as CRDs (Kubernetes-native persistence)
+- **ConfigMap Caddyfile:** Store generated Caddy config in a Kubernetes `ConfigMap`
+- Run Caddy as a deployment or equivalent operator-managed runtime component
+- Use a file-based reload path or admin API that is observable and recoverable
+- A `PublishedService`-focused controller renders one effective Caddy config from all active published HTTPS hosts
+- Remove local proxy rule persistence from the target design
 
 ### 4. Tailscale Integration
 
@@ -334,43 +354,49 @@ RefreshDeviceIPs() error
 **Proposed CRD Structure:**
 ```yaml
 apiVersion: tailscale.jerkytreats.dev/v1alpha1
-kind: TailscaleDevice
+kind: TailnetDNSConfig
 metadata:
-  name: my-device
+  name: internal-zone
 spec:
-  hostname: my-device
-  autoSync: true
-  annotations:
-    description: "My development machine"
+  zone: internal.example.test
+  nameserver:
+    address: 198.51.100.53
+  tailnet: example.ts.net
+  auth:
+    secretRef:
+      name: tailnet-admin-credentials
+      key: api-key
+  behavior:
+    mode: bootstrapAndRepair
 status:
-  tailscaleIP: 100.64.1.5
-  online: true
-  lastSyncedAt: "2024-01-01T12:00:00Z"
+  configuredNameserver: 198.51.100.53
+  driftDetected: false
+  lastAppliedAt: "2024-01-01T12:00:00Z"
+  conditions:
+    - type: SplitDNSReady
+      status: "True"
 ```
 
 **Reconciliation Logic:**
-- Watch TailscaleDevice CRDs
-- Poll Tailscale API periodically (configurable interval)
-- **DO NOT automatically create DNSRecord resources** - users must create DNSRecords manually
-- Update TailscaleDevice status with current IP, online state, and device metadata
-- Provide device information for DNSRecord reconciliation (via reference or label selector)
-- Handle device removal and IP changes
+- Watch `TailnetDNSConfig` resources
+- Reconcile Tailscale restricted nameserver configuration for the managed internal zone
+- Detect drift between desired and effective split-DNS state
+- Update status with configured nameserver, last apply time, and drift state
+- Provide a rerunnable bootstrap and repair path
 
 **Challenges:**
 1. **API Rate Limiting:** Tailscale API has rate limits
-2. **Polling vs Webhooks:** Current implementation uses polling
-3. **Device Discovery:** How to discover new devices automatically
-4. **IP Change Detection:** Need to update DNSRecord resources when device IPs change
+2. **Bootstrap vs Repair:** Split-DNS must work for first install and later endpoint drift
+3. **Failure Recovery:** Manual break-glass recovery must exist when automation fails
+4. **Desired State Ownership:** The authoritative nameserver endpoint must come from durable state, not portal notes
 
 **Solutions (DECIDED):**
-- **TailscaleDevice CRD creates references only** - no automatic DNSRecord creation
-- DNSRecord can reference a TailscaleDevice via owner reference or label selector
-- DNSRecordController will resolve TailscaleDevice IPs when reconciling DNSRecords
-- Use controller-runtime's RequeueAfter for polling intervals
+- **`TailnetDNSConfig` owns split-DNS intent** - no device discovery or automatic DNS record creation in the target design
+- Keep split-DNS changes outside the hot path for per-service publishing reconciles
+- Use controller-runtime requeue behavior for drift detection and repair loops
 - Implement exponential backoff for rate limit handling
-- Use Tailscale webhooks if available, fallback to polling
-- Use status subresource to track IP changes and expose device information
-- DNSRecord reconciliation will watch referenced TailscaleDevices and update DNS records when device IPs change
+- Use status subresource to track configured nameserver, drift, and repair results
+- Preserve a manual recovery path if Tailscale automation is unavailable
 
 ### 5. Configuration Management
 
@@ -466,16 +492,16 @@ Reload() error
 ### Target Flow: CRD Creation → Reconciliation
 
 ```
-1. kubectl apply -f dnsrecord.yaml
+1. kubectl apply -f publishedservice.yaml
    ↓
 2. Kubernetes API Server → etcd
    ↓
-3. DNSRecord Controller (Watch)
+3. PublishedService Controller (Watch)
    ├─→ Reconcile() triggered
-   ├─→ Validate DNSRecord spec
-   ├─→ Update CoreDNS ConfigMap/zone file
-   ├─→ Create/update ProxyRule if proxy enabled
-   └─→ Update DNSRecord status
+   ├─→ Validate PublishedService spec
+   ├─→ Project authoritative DNS intent
+   ├─→ Update rendered Caddy config
+   └─→ Update PublishedService status
    ↓
 4. Status reflects current state
 ```
@@ -530,14 +556,14 @@ Reload() error
 
 **Options:**
 - **Monolithic Controller:** One controller handles DNS, Proxy, Certificates
-- **Separate Controllers:** DNSController, ProxyController, CertificateController
+- **Separate Controllers:** DNS publication, HTTPS runtime, certificate, and split-DNS repair controllers
 - **Hybrid:** Core controller with helper controllers
 
 **DECISION:** Separate controllers with clear boundaries:
-- **DNSRecordController:** Manages DNS records and zone ConfigMaps
-- **CertificateController:** Manages Let's Encrypt certificates with automatic SAN management
-- **ProxyRuleController:** Manages Caddy proxy rules and Caddyfile ConfigMap
-- **TailscaleDeviceController:** Manages Tailscale device sync and provides device references (no automatic DNSRecord creation)
+- **DNSRecordController:** Manages authoritative DNS records and zone `ConfigMap` output
+- **CertificateBundleController:** Manages shared SAN certificate issuance, renewal, and secret publication
+- **PublishedServiceController:** Manages HTTPS publishing intent and rendered Caddy config
+- **TailnetDNSConfigController:** Manages Tailscale split-DNS bootstrap and repair
 
 ### 3. Zone File Management
 
@@ -559,47 +585,45 @@ Reload() error
 **Challenge:** Multiple DNSRecords may need the same certificate.
 
 **Solutions:**
-1. **Certificate CRD:** Separate Certificate resource that DNSRecords reference
+1. **CertificateBundle resource:** Shared explicit SAN resource derived from published HTTPS hosts
 2. **Automatic Pooling:** Controller automatically groups domains into certificates
-3. **Manual Assignment:** Users explicitly create and reference certificates
+3. **Manual Assignment:** Users explicitly manage bundle membership
 
-**DECISION:** Certificate CRD with automatic SAN management.
-- DNSRecord can reference a Certificate via owner reference or label selector
-- CertificateController automatically adds DNSRecord FQDN to Certificate's SAN list when DNSRecord is created
-- CertificateController automatically removes DNSRecord FQDN from Certificate's SAN list when DNSRecord is deleted
-- Certificate renewal triggered automatically when SAN list changes
+**DECISION:** `CertificateBundle` with derived shared SAN management.
+- `CertificateBundle` derives effective SAN membership from published HTTPS hosts and any explicit additional domains
+- The effective SAN set remains visible through resource status
+- Renewal is triggered from durable desired state changes with rate-limit-aware backoff
 
-### 5. Proxy Rule Coordination
+### 5. HTTPS Runtime Coordination
 
-**Challenge:** Multiple ProxyRules need to be combined into a single Caddyfile.
+**Challenge:** Multiple published HTTPS hosts need to be combined into a single effective Caddy config.
 
 **Solutions:**
-1. **Aggregating Controller:** Single controller that watches all ProxyRules
-2. **ConfigMap Generation:** Generate Caddyfile ConfigMap from all ProxyRules
+1. **Aggregating Controller:** Single controller that watches all published HTTPS services
+2. **ConfigMap Generation:** Generate Caddy config `ConfigMap` from all effective published services
 3. **Caddy Admin API:** Use Caddy's dynamic config API
 
-**DECISION:** ConfigMap-based Caddyfile generation with aggregating ProxyRuleController.
-- ProxyRuleController watches all ProxyRule CRDs
-- Generates single Caddyfile from all active ProxyRules
-- Stores generated Caddyfile in ConfigMap (e.g., `caddy-config`)
-- Caddy Deployment/DaemonSet mounts ConfigMap and watches for changes
+**DECISION:** ConfigMap-based Caddy config generation from `PublishedService`.
+- `PublishedServiceController` watches all publishable services
+- Generates one effective Caddy config from all active published HTTPS hosts
+- Stores generated config in a `ConfigMap` such as `caddy-config`
+- Caddy runtime mounts that config and reloads through a defined, observable path
 
 ### 6. Tailscale Integration
 
-**Challenge:** How to model Tailscale devices and sync behavior.
+**Challenge:** How to model Tailscale split-DNS ownership and repair behavior.
 
 **Solutions:**
-1. **TailscaleDevice CRD:** Explicit device resources
-2. **Automatic Discovery:** Controller automatically creates DNSRecords from Tailscale API
-3. **Hybrid:** TailscaleDevice CRD with automatic DNSRecord creation
-4. **Reference Only:** TailscaleDevice CRD provides device information, DNSRecords reference devices
+1. **Bootstrap Job:** One-shot automation for initial split-DNS setup
+2. **Controller:** `TailnetDNSConfig` resource with reconcile and repair behavior
+3. **Hybrid:** Controller plus explicit rerun path for repairs
+4. **Manual Only:** Keep split-DNS configuration outside the product
 
-**DECISION:** TailscaleDevice CRD that creates references to Tailscale devices, but does NOT automatically create DNSRecord resources.
-- TailscaleDeviceController polls Tailscale API and updates TailscaleDevice CRD status
-- DNSRecord can reference a TailscaleDevice via owner reference or label selector
-- DNSRecordController resolves TailscaleDevice IP when reconciling DNSRecords
-- Users must manually create DNSRecord resources (no automatic creation)
-- DNSRecord reconciliation watches referenced TailscaleDevices and updates DNS records when device IPs change
+**DECISION:** `TailnetDNSConfig` with bootstrap and repair automation.
+- `TailnetDNSConfigController` manages restricted nameserver state for the internal zone
+- The target design does not create device resources or generate DNS records from device inventory
+- Split-DNS drift is surfaced through resource status and repairable through rerunnable automation
+- Users manage authoritative DNS through `PublishedService` and `DNSRecord`, not through device sync
 
 ## API Endpoint Mapping
 
@@ -607,11 +631,9 @@ Reload() error
 
 | REST Endpoint | Method | CRD Equivalent |
 |--------------|--------|---------------|
-| `/add-record` | POST | `kubectl apply -f dnsrecord.yaml` |
-| `/list-records` | GET | `kubectl get dnsrecords` |
-| `/remove-record` | DELETE | `kubectl delete dnsrecord <name>` |
-| `/list-devices` | GET | `kubectl get tailscaledevices` |
-| `/annotate-device` | POST | `kubectl patch tailscaledevice <name>` |
+| `/add-record` | POST | API creates or updates `PublishedService` or `DNSRecord` |
+| `/list-records` | GET | API reads `PublishedService` and `DNSRecord` resources |
+| `/remove-record` | DELETE | API deletes or disables `PublishedService` or `DNSRecord` |
 | `/health` | GET | Controller health endpoint or Kubernetes probes |
 
 **Note:** The REST API can still be provided as a convenience layer on top of CRDs using an API server or webhook.
@@ -634,51 +656,48 @@ Reload() error
 
 ## Migration Phases
 
-### Phase 1: Core DNS Record Management
-- Create DNSRecord CRD
-- Implement DNSRecordController
-- Migrate zone file management to ConfigMap
-- Basic create/update/delete operations
+### Phase 1: Foundation and Control Loop
+- Establish the controller-runtime project, install shape, and shared status conventions
+- Define baseline deployment wiring for the operator and runtime dependencies
 
-### Phase 2: Certificate Management
-- Create Certificate CRD
-- Implement CertificateController
-- Integrate with DNSRecord for SAN management
-- Certificate renewal and monitoring
+### Phase 2: API and Resource Model
+- Create `PublishedService`, `DNSRecord`, `CertificateBundle`, and `TailnetDNSConfig`
+- Define validation, references, conditions, and example manifests
+- Preserve the API convenience layer over durable CRDs
 
-### Phase 3: Proxy Management
-- Create ProxyRule CRD (or extend DNSRecord)
-- Implement ProxyRuleController
-- Caddy integration and config generation
-- Proxy rule coordination
+### Phase 3: Authoritative Internal DNS Slice
+- Implement the `DNSRecord` reconciler
+- Project `PublishedService` hostnames into authoritative DNS output
+- Render authoritative zone data into `ConfigMap` resources
 
-### Phase 4: Tailscale Integration
-- Create TailscaleDevice CRD
-- Implement TailscaleDeviceController
-- Automatic DNSRecord creation
-- Device sync and polling
+### Phase 4: Split-DNS Bootstrap and Repair
+- Implement `TailnetDNSConfig` reconcile or equivalent repair automation path
+- Manage Tailscale restricted nameserver configuration for `internal.example.test`
+- Detect and repair split-DNS drift safely
 
-### Phase 5: Advanced Features
-- Health checks and monitoring
-- Metrics and observability
-- Webhook validation
-- RBAC and security policies
+### Phase 5: Shared SAN Certificate Management
+- Implement the `CertificateBundle` reconciler
+- Derive SAN membership from published HTTPS hosts
+- Model issuance, renewal, and secret publication
+
+### Phase 6: HTTPS Publishing Runtime
+- Implement the `PublishedService` reconciler
+- Render Caddy configuration into operator-owned runtime resources
+- Define reload, deployment, and runtime verification behavior
+
+### Phase 7+: Security, Observability, Testing, and Cutover
+- Land RBAC, secret flow hardening, and validation coverage
+- Add observability, migration tooling, release flow, and cutover validation
 
 ## Open Questions
 
-1. **Zone File Format:** Should we maintain zone file format in ConfigMap or move to a more structured format (e.g., structured data with zone file generation)?
+1. **Zone Rendering Shape:** Should the operator store rendered zone text only, or also keep a more structured intermediate representation for debugging and diffing?
 
-2. **Caddy Deployment:** Should Caddy run as a sidecar, DaemonSet, or separate Deployment?
+2. **Caddy Runtime Shape:** Should runtime reload use file watching, the admin API, or both for safe recovery?
 
-3. **Certificate Storage:** Should certificates be stored in Secrets or separate storage mechanism?
+3. **Namespace Boundaries:** Which resources, if any, should support cross-namespace references in the first cluster target?
 
-4. **API Compatibility:** Should we maintain REST API compatibility layer or require users to use kubectl/API directly?
-
-5. **Multi-Tenancy:** How to handle namespace isolation and resource quotas?
-
-6. **Backup/Recovery:** How to handle etcd backup/restore for CRD state?
-
-7. **DNSRecord-TailscaleDevice Binding:** What is the preferred method for DNSRecord to reference TailscaleDevice (owner reference, label selector, or explicit reference field)?
+4. **Backup/Recovery Guidance:** What operational guidance should accompany etcd-backed CRD state and cutover rollback?
 
 ## Summary of Architectural Decisions
 
@@ -686,19 +705,21 @@ The following key decisions have been finalized for the dns-operator implementat
 
 | Decision Area | Decision | Rationale |
 |--------------|----------|-----------|
-| **DNS Record Granularity** | One CRD per DNS Record | Fine-grained control, matches current API model, enables per-record management |
+| **DNS Record Granularity** | One CRD per authoritative DNS record | Fine-grained control, preserves a low-level escape hatch, enables per-record management |
+| **Primary Publishing Resource** | `PublishedService` | Keeps the common workflow product-oriented instead of proxy-rule-oriented |
 | **Controller Architecture** | Separate controllers with clear boundaries | Separation of concerns, independent scaling, easier testing and maintenance |
-| **Zone File Management** | ConfigMap-based zone files | Kubernetes-native, atomic updates, version control, easy to mount in CoreDNS |
-| **Certificate SAN Management** | Automatic SAN management | Reduces manual certificate management, automatic renewal when DNSRecords change |
-| **Proxy Configuration** | ConfigMap-based Caddyfile | Kubernetes-native, version control, easy to mount in Caddy, atomic updates |
-| **Tailscale Integration** | TailscaleDevice CRD with references only | Explicit control, no automatic DNSRecord creation, users manage DNSRecords manually |
+| **Zone Management** | ConfigMap-based rendered zone data | Kubernetes-native, atomic updates, version control, easy to mount in CoreDNS |
+| **Certificate Management** | `CertificateBundle` with shared explicit SANs | Matches current shared-cert behavior without relying on wildcard assumptions |
+| **HTTPS Runtime** | ConfigMap-based rendered Caddy config from `PublishedService` | Kubernetes-native runtime output with stable aggregation |
+| **Tailscale Integration** | `TailnetDNSConfig` bootstrap and repair | Explicit ownership of split-DNS without device discovery in the core model |
+| **API Surface** | Convenience API over CRDs | Preserves fast bootstrap while keeping CRDs as the source of truth |
 
 ### Controller Responsibilities
 
-- **DNSRecordController:** Watches DNSRecord CRDs, aggregates by zone, updates zone ConfigMaps
-- **CertificateController:** Watches Certificate and DNSRecord CRDs, manages SAN lists automatically, handles certificate renewal
-- **ProxyRuleController:** Watches ProxyRule CRDs, generates Caddyfile ConfigMap from all active rules
-- **TailscaleDeviceController:** Polls Tailscale API, updates TailscaleDevice CRD status, provides device references (no DNSRecord creation)
+- **DNSRecordController:** Watches `DNSRecord` resources, aggregates by zone, and updates authoritative zone `ConfigMap` output
+- **CertificateBundleController:** Watches `CertificateBundle` resources and published HTTPS hosts, manages shared SAN state, and publishes certificate secrets
+- **PublishedServiceController:** Watches `PublishedService` resources, projects DNS intent, and renders Caddy runtime config
+- **TailnetDNSConfigController:** Watches `TailnetDNSConfig` resources and repairs restricted nameserver state for the internal zone
 
 ## Conclusion
 
@@ -710,9 +731,9 @@ The reference DNS service provides a solid foundation for understanding the doma
    - Implement event-driven reconciliation loops
 
 2. **Component Separation:**
-   - Split monolithic service into focused controllers
-   - Clear boundaries between DNS, Certificate, Proxy, and Tailscale concerns
-   - Use Kubernetes primitives (ConfigMaps, Secrets) for configuration
+   - Split the monolithic service into focused controllers
+   - Keep clear boundaries between authoritative DNS, certificate management, HTTPS runtime, and split-DNS repair
+   - Use Kubernetes primitives (`ConfigMap`, `Secret`, status) for desired and rendered state
 
 3. **State Management:**
    - Leverage etcd for distributed state
@@ -720,8 +741,8 @@ The reference DNS service provides a solid foundation for understanding the doma
    - Implement finalizers for cleanup coordination
 
 4. **Integration Points:**
-   - CoreDNS integration via ConfigMaps or direct file mounts
-   - Caddy integration via ConfigMaps or admin API
-   - Tailscale API integration with proper rate limiting
+   - CoreDNS integration via rendered zone `ConfigMap` resources
+   - Caddy integration via rendered runtime config and observable reload behavior
+   - Tailscale API integration for split-DNS bootstrap and repair with proper rate limiting
 
 The reference implementation provides excellent domain knowledge and business logic that can be directly ported to the reconciler pattern, with the main changes being in how state is managed and how operations are triggered (API calls → CRD watches).

@@ -2,12 +2,12 @@
 
 ## Goal
 
-Make sure Tailscale clients resolve `internal.jerkytreats.dev` against the correct authoritative nameserver endpoint, even when that endpoint changes.
+Make sure Tailscale clients resolve `internal.example.test` against the correct authoritative nameserver endpoint, even when that endpoint changes.
 
 ## Scope
 
 - Implement the `TailnetDNSConfig` controller or equivalent bootstrap/repair automation path.
-- Manage Tailscale restricted nameserver configuration for `internal.jerkytreats.dev`.
+- Manage Tailscale restricted nameserver configuration for `internal.example.test`.
 - Define drift detection, rerun safety, and a manual break-glass path.
 - Keep split-DNS management outside the hot path for every `PublishedService` reconcile.
 
@@ -42,7 +42,7 @@ This means split-DNS must be treated as required platform automation, not as an 
 
 ## Exit Criteria
 
-- A fresh install can configure split-DNS for `internal.jerkytreats.dev`.
+- A fresh install can configure split-DNS for `internal.example.test`.
 - A changed authoritative nameserver endpoint can be repaired safely and rerun idempotently.
 - Status shows whether split-DNS is configured, stale, or broken.
 - Error handling covers missing credentials, Tailscale API failure, and partial configuration drift.

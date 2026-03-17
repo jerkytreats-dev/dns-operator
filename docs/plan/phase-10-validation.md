@@ -45,7 +45,7 @@ It must also prove that Argo can install the operator from this repository using
 - Recovery behavior after operator restart, runtime restart, and transient dependency failure.
 - Verification that rendered runtime artifacts match desired cluster state.
 - Evidence that imported runtime data preserves current hostname, backend, and SAN behavior.
-- Evidence that Tailscale clients resolve `internal.jerkytreats.dev` through the new authoritative endpoint after cutover.
+- Evidence that Tailscale clients resolve `internal.example.test` through the new authoritative endpoint after cutover.
 - Evidence that browser access succeeds under HSTS expectations from inside Tailscale.
 - Evidence that the infra repository can point Argo at the install overlay in this repository and reach a healthy sync.
 

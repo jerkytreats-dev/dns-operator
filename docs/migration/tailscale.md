@@ -2,7 +2,7 @@
 
 ## Overview
 
-This migration narrows Tailscale integration to split-DNS ownership for `internal.jerkytreats.dev`.
+This migration narrows Tailscale integration to split-DNS ownership for `internal.example.test`.
 
 ## What Changes
 
@@ -54,7 +54,7 @@ Delete or stop migrating:
 
 Success means clients on the tailnet:
 
-- resolve `internal.jerkytreats.dev` through the intended authoritative nameserver
+- resolve `internal.example.test` through the intended authoritative nameserver
 - do not resolve that zone outside the tailnet
 
 ## Testing Checklist

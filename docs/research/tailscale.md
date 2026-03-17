@@ -2,13 +2,13 @@
 
 ## Executive Summary
 
-The Tailscale integration should focus on split-DNS ownership for `internal.jerkytreats.dev`. Device discovery, device inventory, and device-backed DNS are no longer the product direction.
+The Tailscale integration should focus on split-DNS ownership for `internal.example.test`. Device discovery, device inventory, and device-backed DNS are no longer the product direction.
 
 ## Product Role
 
 Tailscale is required so that:
 
-- `internal.jerkytreats.dev` resolves only inside the tailnet
+- `internal.example.test` resolves only inside the tailnet
 - clients use the operator-managed authoritative nameserver for that zone
 - split-DNS configuration can be bootstrapped and repaired without manual portal work
 

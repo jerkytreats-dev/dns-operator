@@ -2,12 +2,12 @@
 
 ## Goal
 
-Build a Kubernetes-hosted internal publishing platform for `internal.jerkytreats.dev` that gives users a real domain experience inside the tailnet:
+Build a Kubernetes-hosted internal publishing platform for `internal.example.test` that gives users a real domain experience inside the tailnet:
 
-- authoritative DNS for `internal.jerkytreats.dev`
+- authoritative DNS for `internal.example.test`
 - browser-safe HTTPS for published internal hosts
 - behavior that succeeds under real browser HSTS expectations
-- support for nested names such as `bar.foo.internal.jerkytreats.dev`
+- support for nested names such as `bar.foo.internal.example.test`
 - CRD-first durable state with an API convenience layer for fast bootstrap
 - required Tailscale split-DNS bootstrap and repair automation
 
@@ -17,7 +17,7 @@ This roadmap is not primarily about transposing the current DNS manager into CRD
 
 The roadmap entrypoint exists to make the product contract explicit for future contributors and agents:
 
-- `internal.jerkytreats.dev` must resolve only inside the Tailscale network.
+- `internal.example.test` must resolve only inside the Tailscale network.
 - The system is the authoritative nameserver for that zone.
 - Browser-facing hosts under that zone must succeed over HTTPS in real browsers.
 - Browser success includes HSTS-safe behavior, not just passing a local `curl`.
@@ -87,10 +87,10 @@ Each phase should produce four things:
 
 The current reference system is not just source code in `reference/`. It also has a live runtime data shape captured in a local export plus external Tailscale admin state that are intentionally kept outside the repository.
 
-- One active managed zone
+- A managed internal zone
 - persisted proxy rule state
 - persisted certificate SAN state
-- one shared certificate pattern used across many Caddy hosts
+- a shared certificate pattern used across many Caddy hosts
 - manually configured Tailscale split-DNS pointing the internal zone at the current nameserver IP
 - plain text provider credentials in the legacy runtime config
 
@@ -105,7 +105,7 @@ The target Argo deployment model is in [Deployment shape](deployment-shape.md).
 The roadmap is complete when:
 
 - `PublishedService`, `DNSRecord`, `CertificateBundle`, and `TailnetDNSConfig` have stable schemas and status contracts.
-- Users inside Tailscale can resolve and browse published hosts under `internal.jerkytreats.dev`.
+- Users inside Tailscale can resolve and browse published hosts under `internal.example.test`.
 - Published HTTPS hosts succeed under browser HSTS expectations with valid SAN coverage.
 - CoreDNS and Caddy runtime artifacts are rendered from operator owned resources.
 - Split-DNS can be bootstrapped and safely repaired when the authoritative nameserver endpoint changes.

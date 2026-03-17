@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document records the observed state of the current reference DNS manager from the exported runtime data plus the manually configured Tailscale DNS state. The roadmap should stay aligned with this inventory so migration work targets the real system, not an abstract design.
+This document records a sanitized view of the observed state of the current reference DNS manager from the exported runtime data plus the manually configured Tailscale DNS state. The roadmap should stay aligned with this inventory so migration work targets the real system, not an abstract design.
 
 ## Source Snapshot
 
@@ -21,24 +21,24 @@ Observed from a local runtime export stored outside the repository.
 
 ## Observed Inventory
 
-- One managed zone
+- A managed internal zone
 - multiple DNS A records in the zone file
 - multiple stored proxy rules
 - multiple certificate SAN domains
-- one manually configured restricted nameserver for the internal zone in Tailscale
+- a manually configured restricted nameserver entry for the internal zone in Tailscale
 
 ## DNS Reality
 
-- The current system serves one zone from a single zone file.
-- Some names map directly to device IPs.
-- Many service names map to the DNS manager host IP and rely on Caddy for the final backend hop.
+- The current system serves the internal zone from a single zone file.
+- Some names map directly to device addresses.
+- Many service names map to a shared ingress address and rely on Caddy for the final backend hop.
 - The zone includes mixed case names and lower case equivalents.
 - The zone also includes nested labels.
-- The current authoritative nameserver endpoint is tied to one specific Tailscale IP.
+- The current authoritative nameserver endpoint is tied to a specific tailnet address.
 
 ## Tailscale DNS Reality
 
-- `internal.jerkytreats.dev` currently resolves only inside Tailscale via restricted nameserver settings.
+- `internal.example.test` currently resolves only inside Tailscale via restricted nameserver settings.
 - That split-DNS configuration is managed manually in the Tailscale admin portal today.
 - The current split-DNS target points at the old authoritative nameserver endpoint, which will change during migration.
 - The current runtime also stores raw Tailscale admin credentials in `config.yaml`.

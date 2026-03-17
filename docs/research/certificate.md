@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The certificate domain must support browser-safe HTTPS for internal hosts under `internal.jerkytreats.dev`. Because wildcard certificates are not the target model, shared explicit SAN management becomes a core product feature rather than an implementation detail.
+The certificate domain must support browser-safe HTTPS for internal hosts under `internal.example.test`. Because wildcard certificates are not the target model, shared explicit SAN management becomes a core product feature rather than an implementation detail.
 
 ## Product Role
 
@@ -48,7 +48,7 @@ The operator should:
 ## Important Constraints
 
 - Do not assume wildcard certificates.
-- Support nested names such as `bar.foo.internal.jerkytreats.dev`.
+- Support nested names such as `bar.foo.internal.example.test`.
 - Avoid uncontrolled SAN mutation that can thrash issuance.
 - Ensure runtime consumers can tell when a hostname is not yet covered.
 

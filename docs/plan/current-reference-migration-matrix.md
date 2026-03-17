@@ -110,7 +110,7 @@ The import path should run in this order:
 **Migration notes**
 
 - Backend protocol differences must be preserved.
-- HTTPS backends such as `sunshine` require explicit backend transport handling in the first renderer.
+- HTTPS backends such as `media` require explicit backend transport handling in the first renderer.
 - `created_at` is useful migration metadata and should move to an annotation instead of spec.
 - Disabled rules should either be omitted or imported in a paused state, but should not silently publish traffic.
 
@@ -217,7 +217,7 @@ After import, validate:
 - all imported published hosts render equivalent backend mappings
 - imported HTTPS backends preserve required transport settings such as insecure verification flags
 - all SAN domains appear on the imported shared certificate bundle
-- split-DNS points `internal.jerkytreats.dev` at the intended authoritative nameserver endpoint
+- split-DNS points `internal.example.test` at the intended authoritative nameserver endpoint
 - no source credentials remain in plain text config used by the new operator runtime
 - case collisions and normalization changes are captured in a migration report
 

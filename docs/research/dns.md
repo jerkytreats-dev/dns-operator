@@ -2,14 +2,14 @@
 
 ## Executive Summary
 
-The DNS domain should be treated as the authoritative engine for `internal.jerkytreats.dev`, not just as file-backed record management. The product requirement is that published internal hostnames resolve correctly inside the tailnet, including nested names, and that the DNS layer cleanly supports the HTTPS publishing workflow.
+The DNS domain should be treated as the authoritative engine for `internal.example.test`, not just as file-backed record management. The product requirement is that published internal hostnames resolve correctly inside the tailnet, including nested names, and that the DNS layer cleanly supports the HTTPS publishing workflow.
 
 ## Product Role
 
 DNS must provide:
 
-- authoritative answers for `internal.jerkytreats.dev`
-- support for nested hostnames such as `bar.foo.internal.jerkytreats.dev`
+- authoritative answers for `internal.example.test`
+- support for nested hostnames such as `bar.foo.internal.example.test`
 - deterministic zone rendering for CoreDNS
 - a clean projection path from `PublishedService` into authoritative records
 
@@ -58,7 +58,7 @@ The operator should:
 
 Recommended `DNSRecord` characteristics:
 
-- `hostname`: full hostname under `internal.jerkytreats.dev`
+- `hostname`: full hostname under `internal.example.test`
 - `type`: explicit record type
 - `ttl`: bounded and validated
 - `values`: one or more literal values
@@ -89,5 +89,5 @@ Useful status signals:
 
 ## Summary
 
-`DNSRecord` is still valuable, but the main user workflow should begin with `PublishedService`. The DNS domain then turns durable product state into authoritative internal zone output for `internal.jerkytreats.dev`.
+`DNSRecord` is still valuable, but the main user workflow should begin with `PublishedService`. The DNS domain then turns durable product state into authoritative internal zone output for `internal.example.test`.
 

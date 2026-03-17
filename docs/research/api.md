@@ -16,7 +16,7 @@ The API exists to support workflows like:
 
 1. start a small service on a node
 2. call one endpoint
-3. get a working hostname under `internal.jerkytreats.dev`
+3. get a working hostname under `internal.example.test`
 4. have it resolve only inside Tailscale
 5. have it load in a browser over HTTPS
 
@@ -41,10 +41,10 @@ That means the API should be shaped around `PublishedService`, not around low-le
 
 ```json
 {
-  "hostname": "grafana.internal.jerkytreats.dev",
+  "hostname": "app.internal.example.test",
   "publishMode": "httpsProxy",
   "backend": {
-    "address": "100.70.110.111",
+    "address": "192.0.2.10",
     "port": 80,
     "protocol": "http"
   },

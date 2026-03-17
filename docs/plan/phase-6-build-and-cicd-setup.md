@@ -14,12 +14,12 @@ Render and run the HTTPS publishing tier that terminates browser traffic for int
 
 ## Current Reference Inputs
 
-The current export shows `13` persisted proxy rules in `proxy_rules.json` and a rendered `Caddyfile` with many host blocks using one shared certificate path.
+The current export shows multiple persisted proxy rules in `proxy_rules.json` and a rendered `Caddyfile` with many host blocks using a shared certificate path.
 
 Backends currently include both:
 
 - plain HTTP targets
-- HTTPS targets such as `sunshine` that require backend transport TLS handling
+- HTTPS targets such as `media` that require backend transport TLS handling
 
 The rendered `Caddyfile` also carries backend transport details that are not present in `proxy_rules.json`, including `tls_insecure_skip_verify` for some HTTPS backends.
 

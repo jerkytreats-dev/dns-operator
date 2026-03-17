@@ -2,7 +2,7 @@
 
 ## Overview
 
-This migration turns the DNS layer into an authoritative internal zone pipeline for `internal.jerkytreats.dev`.
+This migration turns the DNS layer into an authoritative internal zone pipeline for `internal.example.test`.
 
 ## Migration Goals
 
@@ -43,7 +43,7 @@ This lets the product-facing resource drive the main workflow while preserving a
 
 The controller should:
 
-- collect all effective records for `internal.jerkytreats.dev`
+- collect all effective records for `internal.example.test`
 - sort deterministically
 - generate the full zone artifact
 - update the runtime only when content actually changes
@@ -63,7 +63,7 @@ Validation must accept:
 
 - nested hostnames
 - mixed-case legacy inputs that normalize safely
-- full hostnames under `internal.jerkytreats.dev`
+- full hostnames under `internal.example.test`
 
 Avoid legacy regex patterns that reject valid nested records.
 
