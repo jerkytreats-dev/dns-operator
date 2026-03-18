@@ -16,6 +16,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - dns.jerkytreats.dev
   resources:
   - dnsrecords
@@ -53,6 +61,32 @@ rules:
   - publish.jerkytreats.dev
   resources:
   - publishedservices/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - tailscale.jerkytreats.dev
+  resources:
+  - tailnetdnsconfigs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - tailscale.jerkytreats.dev
+  resources:
+  - tailnetdnsconfigs/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - tailscale.jerkytreats.dev
+  resources:
+  - tailnetdnsconfigs/status
   verbs:
   - get
   - patch
