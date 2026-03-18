@@ -3,11 +3,13 @@ package dns
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jerkytreats/dns-operator/api/common"
 	dnsv1alpha1 "github.com/jerkytreats/dns-operator/api/dns/v1alpha1"
 	publishv1alpha1 "github.com/jerkytreats/dns-operator/api/publish/v1alpha1"
 	dnsdomain "github.com/jerkytreats/dns-operator/internal/dns"
+	"github.com/jerkytreats/dns-operator/internal/observability"
 	publishdomain "github.com/jerkytreats/dns-operator/internal/publish"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -16,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,7 +32,8 @@ import (
 // DNSRecordReconciler keeps the authoritative DNS zone artifact in sync.
 type DNSRecordReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=dns.jerkytreats.dev,resources=dnsrecords,verbs=get;list;watch
@@ -38,20 +42,27 @@ type DNSRecordReconciler struct {
 // +kubebuilder:rbac:groups=publish.jerkytreats.dev,resources=publishedservices/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
-func (r *DNSRecordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *DNSRecordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
+	started := time.Now()
+	defer func() {
+		observability.ObserveReconcile("dns-dnsrecord", started, result, err)
+	}()
+
 	logger := log.FromContext(ctx).WithValues("namespace", req.Namespace, "name", req.Name)
 	if req.Namespace == "" {
 		return ctrl.Result{}, nil
 	}
 
 	var records dnsv1alpha1.DNSRecordList
-	if err := r.List(ctx, &records, client.InNamespace(req.Namespace)); err != nil {
+	if err = r.List(ctx, &records, client.InNamespace(req.Namespace)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list dns records: %w", err)
 	}
 
 	var services publishv1alpha1.PublishedServiceList
-	if err := r.List(ctx, &services, client.InNamespace(req.Namespace)); err != nil {
+	if err = r.List(ctx, &services, client.InNamespace(req.Namespace)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list published services: %w", err)
 	}
 
@@ -81,7 +92,8 @@ func (r *DNSRecordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	rendered := dnsdomain.RenderZone(projected)
-	configMapErr := r.reconcileZoneConfigMap(ctx, req.Namespace, rendered)
+	operation, configMapErr := r.reconcileZoneConfigMap(ctx, req.Namespace, rendered)
+	observability.RecordArtifactUpdate("dns-dnsrecord", "zone_configmap", operation)
 	if configMapErr != nil {
 		logger.Error(configMapErr, "unable to reconcile zone configmap")
 	}
@@ -195,7 +207,7 @@ func (r *DNSRecordReconciler) resolvePublishRuntimeTarget(ctx context.Context, n
 	return "", fmt.Errorf("publish runtime service does not have an address yet")
 }
 
-func (r *DNSRecordReconciler) reconcileZoneConfigMap(ctx context.Context, namespace string, rendered dnsdomain.RenderedZone) error {
+func (r *DNSRecordReconciler) reconcileZoneConfigMap(ctx context.Context, namespace string, rendered dnsdomain.RenderedZone) (string, error) {
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      rendered.ConfigMapName,
@@ -218,9 +230,9 @@ func (r *DNSRecordReconciler) reconcileZoneConfigMap(ctx context.Context, namesp
 	key := client.ObjectKeyFromObject(desired)
 	if err := r.Get(ctx, key, current); err != nil {
 		if apierrors.IsNotFound(err) {
-			return r.Create(ctx, desired)
+			return observability.OperationCreate, r.Create(ctx, desired)
 		}
-		return err
+		return "", err
 	}
 
 	changed := false
@@ -250,10 +262,10 @@ func (r *DNSRecordReconciler) reconcileZoneConfigMap(ctx context.Context, namesp
 	}
 
 	if !changed {
-		return nil
+		return observability.OperationNoop, nil
 	}
 
-	return r.Update(ctx, current)
+	return observability.OperationUpdate, r.Update(ctx, current)
 }
 
 func (r *DNSRecordReconciler) updateDNSRecordStatus(
@@ -287,7 +299,19 @@ func (r *DNSRecordReconciler) updateDNSRecordStatus(
 		return nil
 	}
 
-	return r.Status().Patch(ctx, record, client.MergeFrom(base))
+	if err := r.Status().Patch(ctx, record, client.MergeFrom(base)); err != nil {
+		return err
+	}
+	observability.EmitConditionTransitions(
+		r.Recorder,
+		record,
+		base.Status.Conditions,
+		record.Status.Conditions,
+		common.ConditionInputValid,
+		common.ConditionAccepted,
+		common.ConditionReady,
+	)
+	return nil
 }
 
 func (r *DNSRecordReconciler) updatePublishedServiceStatus(
@@ -318,7 +342,17 @@ func (r *DNSRecordReconciler) updatePublishedServiceStatus(
 		return nil
 	}
 
-	return r.Status().Patch(ctx, service, client.MergeFrom(base))
+	if err := r.Status().Patch(ctx, service, client.MergeFrom(base)); err != nil {
+		return err
+	}
+	observability.EmitConditionTransitions(
+		r.Recorder,
+		service,
+		base.Status.Conditions,
+		service.Status.Conditions,
+		common.ConditionDNSReady,
+	)
+	return nil
 }
 
 func resetConditions(conditions []metav1.Condition) []metav1.Condition {

@@ -8,6 +8,7 @@ import (
 	certificatev1alpha1 "github.com/jerkytreats/dns-operator/api/certificate/v1alpha1"
 	"github.com/jerkytreats/dns-operator/api/common"
 	publishv1alpha1 "github.com/jerkytreats/dns-operator/api/publish/v1alpha1"
+	"github.com/jerkytreats/dns-operator/internal/observability"
 	publishdomain "github.com/jerkytreats/dns-operator/internal/publish"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -16,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,7 +31,8 @@ const publishRequeueInterval = 2 * time.Minute
 
 type PublishedServiceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=publish.jerkytreats.dev,resources=publishedservices,verbs=get;list;watch
@@ -37,18 +40,25 @@ type PublishedServiceReconciler struct {
 // +kubebuilder:rbac:groups=certificate.jerkytreats.dev,resources=certificatebundles,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
-func (r *PublishedServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
+func (r *PublishedServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
+	started := time.Now()
+	defer func() {
+		observability.ObserveReconcile("publish-publishedservice", started, result, err)
+	}()
+
 	if req.Namespace == "" {
 		return ctrl.Result{}, nil
 	}
 
 	var services publishv1alpha1.PublishedServiceList
-	if err := r.List(ctx, &services, client.InNamespace(req.Namespace)); err != nil {
+	if err = r.List(ctx, &services, client.InNamespace(req.Namespace)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list published services: %w", err)
 	}
 
 	var bundles certificatev1alpha1.CertificateBundleList
-	if err := r.List(ctx, &bundles, client.InNamespace(req.Namespace)); err != nil {
+	if err = r.List(ctx, &bundles, client.InNamespace(req.Namespace)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list certificate bundles: %w", err)
 	}
 
@@ -62,9 +72,14 @@ func (r *PublishedServiceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, fmt.Errorf("build runtime config: %w", err)
 	}
 
-	runtimeErr := r.reconcileRuntimeConfigMap(ctx, req.Namespace, rendered)
+	configMapOperation, runtimeErr := r.reconcileRuntimeConfigMap(ctx, req.Namespace, rendered)
 	if runtimeErr == nil {
-		runtimeErr = r.reconcileRuntimeCertificates(ctx, req.Namespace, rendered)
+		observability.RecordArtifactUpdate("publish-publishedservice", "runtime_configmap", configMapOperation)
+		secretOperation, secretErr := r.reconcileRuntimeCertificates(ctx, req.Namespace, rendered)
+		if secretErr == nil {
+			observability.RecordArtifactUpdate("publish-publishedservice", "runtime_certificates", secretOperation)
+		}
+		runtimeErr = secretErr
 	}
 
 	needsRequeue := runtimeErr != nil
@@ -152,7 +167,7 @@ func (r *PublishedServiceReconciler) reconcileRuntimeConfigMap(
 	ctx context.Context,
 	namespace string,
 	rendered publishdomain.RenderedRuntime,
-) error {
+) (string, error) {
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      rendered.ConfigMapName,
@@ -174,22 +189,28 @@ func (r *PublishedServiceReconciler) reconcileRuntimeConfigMap(
 	key := client.ObjectKeyFromObject(desired)
 	if err := r.Get(ctx, key, current); err != nil {
 		if apierrors.IsNotFound(err) {
-			return r.Create(ctx, desired)
+			return observability.OperationCreate, r.Create(ctx, desired)
 		}
-		return err
+		return "", err
+	}
+
+	if labelsEqual(current.Labels, desired.Labels) &&
+		annotationsEqual(current.Annotations, desired.Annotations) &&
+		stringMapEqual(current.Data, desired.Data) {
+		return observability.OperationNoop, nil
 	}
 
 	current.Labels = desired.Labels
 	current.Annotations = desired.Annotations
 	current.Data = desired.Data
-	return r.Update(ctx, current)
+	return observability.OperationUpdate, r.Update(ctx, current)
 }
 
 func (r *PublishedServiceReconciler) reconcileRuntimeCertificates(
 	ctx context.Context,
 	namespace string,
 	rendered publishdomain.RenderedRuntime,
-) error {
+) (string, error) {
 	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      rendered.CertificatesSecretName,
@@ -207,15 +228,19 @@ func (r *PublishedServiceReconciler) reconcileRuntimeCertificates(
 	key := client.ObjectKeyFromObject(desired)
 	if err := r.Get(ctx, key, current); err != nil {
 		if apierrors.IsNotFound(err) {
-			return r.Create(ctx, desired)
+			return observability.OperationCreate, r.Create(ctx, desired)
 		}
-		return err
+		return "", err
+	}
+
+	if labelsEqual(current.Labels, desired.Labels) && current.Type == desired.Type && secretDataEqual(current.Data, desired.Data) {
+		return observability.OperationNoop, nil
 	}
 
 	current.Labels = desired.Labels
 	current.Type = desired.Type
 	current.Data = desired.Data
-	return r.Update(ctx, current)
+	return observability.OperationUpdate, r.Update(ctx, current)
 }
 
 func (r *PublishedServiceReconciler) patchPublishedServiceStatus(
@@ -275,7 +300,22 @@ func (r *PublishedServiceReconciler) patchPublishedServiceStatus(
 	if equalPublishedServiceStatus(base.Status, service.Status) {
 		return nil
 	}
-	return r.Status().Patch(ctx, service, client.MergeFrom(base))
+	if err := r.Status().Patch(ctx, service, client.MergeFrom(base)); err != nil {
+		return err
+	}
+	observability.EmitConditionTransitions(
+		r.Recorder,
+		service,
+		base.Status.Conditions,
+		service.Status.Conditions,
+		common.ConditionInputValid,
+		common.ConditionAccepted,
+		common.ConditionReferencesResolved,
+		common.ConditionCertificateReady,
+		common.ConditionRuntimeReady,
+		common.ConditionReady,
+	)
+	return nil
 }
 
 func (r *PublishedServiceReconciler) requestsForNamespaceServices(ctx context.Context, namespace string) []reconcile.Request {
@@ -407,4 +447,37 @@ func conditionEquals(a, b metav1.Condition) bool {
 		a.Reason == b.Reason &&
 		a.Message == b.Message &&
 		a.ObservedGeneration == b.ObservedGeneration
+}
+
+func labelsEqual(a, b map[string]string) bool {
+	return stringMapEqual(a, b)
+}
+
+func annotationsEqual(a, b map[string]string) bool {
+	return stringMapEqual(a, b)
+}
+
+func stringMapEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		if b[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func secretDataEqual(a, b map[string][]byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		other, found := b[key]
+		if !found || string(value) != string(other) {
+			return false
+		}
+	}
+	return true
 }

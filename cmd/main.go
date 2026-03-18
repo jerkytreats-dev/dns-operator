@@ -43,6 +43,7 @@ import (
 	dnscontroller "github.com/jerkytreats/dns-operator/internal/controller/dns"
 	publishcontroller "github.com/jerkytreats/dns-operator/internal/controller/publish"
 	tailscalecontroller "github.com/jerkytreats/dns-operator/internal/controller/tailscale"
+	"github.com/jerkytreats/dns-operator/internal/observability"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -188,40 +189,50 @@ func main() {
 	}
 
 	if err := (&dnscontroller.DNSRecordReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("dns-dnsrecord"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DNSRecord")
 		os.Exit(1)
 	}
 	if err := (&certificatecontroller.CertificateBundleReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("certificate-certificatebundle"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "CertificateBundle")
 		os.Exit(1)
 	}
 	if err := (&publishcontroller.PublishedServiceReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("publish-publishedservice"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PublishedService")
 		os.Exit(1)
 	}
 	if err := (&tailscalecontroller.TailnetDNSConfigReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("tailscale-tailnetdnsconfig"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TailnetDNSConfig")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
 
+	cacheReadiness := observability.NewCacheSyncReadiness(mgr.GetCache().WaitForCacheSync)
+	if err := mgr.Add(cacheReadiness); err != nil {
+		setupLog.Error(err, "unable to register cache readiness runnable")
+		os.Exit(1)
+	}
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+	if err := mgr.AddReadyzCheck("readyz", cacheReadiness.Check); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}

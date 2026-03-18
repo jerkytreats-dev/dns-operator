@@ -9,12 +9,14 @@ import (
 	"github.com/jerkytreats/dns-operator/api/common"
 	publishv1alpha1 "github.com/jerkytreats/dns-operator/api/publish/v1alpha1"
 	certdomain "github.com/jerkytreats/dns-operator/internal/certificate"
+	"github.com/jerkytreats/dns-operator/internal/observability"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,17 +30,25 @@ const certificateRequeueInterval = 12 * time.Hour
 
 type CertificateBundleReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=certificate.jerkytreats.dev,resources=certificatebundles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=certificate.jerkytreats.dev,resources=certificatebundles/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=publish.jerkytreats.dev,resources=publishedservices,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
-func (r *CertificateBundleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *CertificateBundleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
+	started := time.Now()
+	defer func() {
+		observability.ObserveReconcile("certificate-certificatebundle", started, result, err)
+	}()
+
 	var bundle certificatev1alpha1.CertificateBundle
-	if err := r.Get(ctx, req.NamespacedName, &bundle); err != nil {
+	if err = r.Get(ctx, req.NamespacedName, &bundle); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
@@ -46,7 +56,7 @@ func (r *CertificateBundleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	var services publishv1alpha1.PublishedServiceList
-	if err := r.List(ctx, &services, client.InNamespace(bundle.Namespace)); err != nil {
+	if err = r.List(ctx, &services, client.InNamespace(bundle.Namespace)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list published services: %w", err)
 	}
 
@@ -62,18 +72,18 @@ func (r *CertificateBundleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		setFalseCondition(&status.Conditions, common.ConditionCertificateReady, "CredentialsUnavailable", secretNamespaceErr.Error(), bundle.Generation)
 		setFalseCondition(&status.Conditions, common.ConditionReady, "CredentialsUnavailable", secretNamespaceErr.Error(), bundle.Generation)
 		status.EffectiveDomains = nil
-		if err := r.patchStatus(ctx, &bundle, status); err != nil {
+		if err = r.patchStatus(ctx, &bundle, status); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 
-	if _, err := r.readSecretValue(ctx, secretNamespace, bundle.Spec.Challenge.Cloudflare.APITokenSecretRef.Name, bundle.Spec.Challenge.Cloudflare.APITokenSecretRef.Key); err != nil {
+	if _, err = r.readSecretValue(ctx, secretNamespace, bundle.Spec.Challenge.Cloudflare.APITokenSecretRef.Name, bundle.Spec.Challenge.Cloudflare.APITokenSecretRef.Key); err != nil {
 		setFalseCondition(&status.Conditions, common.ConditionCredentialsReady, "SecretUnavailable", err.Error(), bundle.Generation)
 		setFalseCondition(&status.Conditions, common.ConditionCertificateReady, "CredentialsUnavailable", err.Error(), bundle.Generation)
 		setFalseCondition(&status.Conditions, common.ConditionReady, "CredentialsUnavailable", err.Error(), bundle.Generation)
 		status.EffectiveDomains = nil
-		if err := r.patchStatus(ctx, &bundle, status); err != nil {
+		if err = r.patchStatus(ctx, &bundle, status); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
@@ -84,7 +94,7 @@ func (r *CertificateBundleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		setTrueCondition(&status.Conditions, common.ConditionCredentialsReady, "SecretResolved", "challenge credentials resolved", bundle.Generation)
 		setFalseCondition(&status.Conditions, common.ConditionCertificateReady, "DomainDerivationFailed", err.Error(), bundle.Generation)
 		setFalseCondition(&status.Conditions, common.ConditionReady, "DomainDerivationFailed", err.Error(), bundle.Generation)
-		if err := r.patchStatus(ctx, &bundle, status); err != nil {
+		if err = r.patchStatus(ctx, &bundle, status); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
@@ -95,7 +105,7 @@ func (r *CertificateBundleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		setTrueCondition(&status.Conditions, common.ConditionCredentialsReady, "SecretResolved", "challenge credentials resolved", bundle.Generation)
 		setFalseCondition(&status.Conditions, common.ConditionCertificateReady, "NoDomainsSelected", "no published HTTPS hosts or explicit domains selected for this bundle", bundle.Generation)
 		setFalseCondition(&status.Conditions, common.ConditionReady, "NoDomainsSelected", "no published HTTPS hosts or explicit domains selected for this bundle", bundle.Generation)
-		if err := r.patchStatus(ctx, &bundle, status); err != nil {
+		if err = r.patchStatus(ctx, &bundle, status); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: certificateRequeueInterval}, nil
@@ -103,11 +113,25 @@ func (r *CertificateBundleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	secret, expiresAt, err := certdomain.BuildTLSSecret(bundle.Spec.SecretTemplate.Name, bundle.Namespace, domains, 0)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("build tls secret: %w", err)
+		setTrueCondition(&status.Conditions, common.ConditionCredentialsReady, "SecretResolved", "challenge credentials resolved", bundle.Generation)
+		setFalseCondition(&status.Conditions, common.ConditionCertificateReady, "IssueFailed", err.Error(), bundle.Generation)
+		setFalseCondition(&status.Conditions, common.ConditionReady, "IssueFailed", err.Error(), bundle.Generation)
+		if patchErr := r.patchStatus(ctx, &bundle, status); patchErr != nil {
+			return ctrl.Result{}, patchErr
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
-	if err := r.reconcileTLSSecret(ctx, secret); err != nil {
-		return ctrl.Result{}, fmt.Errorf("reconcile tls secret: %w", err)
+	operation, err := r.reconcileTLSSecret(ctx, secret)
+	if err != nil {
+		setTrueCondition(&status.Conditions, common.ConditionCredentialsReady, "SecretResolved", "challenge credentials resolved", bundle.Generation)
+		setFalseCondition(&status.Conditions, common.ConditionCertificateReady, "SecretPublishFailed", err.Error(), bundle.Generation)
+		setFalseCondition(&status.Conditions, common.ConditionReady, "SecretPublishFailed", err.Error(), bundle.Generation)
+		if patchErr := r.patchStatus(ctx, &bundle, status); patchErr != nil {
+			return ctrl.Result{}, patchErr
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
+	observability.RecordArtifactUpdate("certificate-certificatebundle", "certificate_secret", operation)
 
 	status.State = certdomain.BundleStateReady
 	status.CertificateSecretRef = &common.ObjectReference{Name: secret.Name, Namespace: secret.Namespace}
@@ -118,7 +142,7 @@ func (r *CertificateBundleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	setTrueCondition(&status.Conditions, common.ConditionCertificateReady, "Issued", "certificate bundle secret published", bundle.Generation)
 	setTrueCondition(&status.Conditions, common.ConditionReady, "Issued", "certificate bundle is ready for runtime attachment", bundle.Generation)
 
-	if err := r.patchStatus(ctx, &bundle, status); err != nil {
+	if err = r.patchStatus(ctx, &bundle, status); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -175,19 +199,23 @@ func namespaceForSecretRef(ownerNamespace, refNamespace string) (string, error) 
 	return "", fmt.Errorf("secret references must remain in namespace %q", ownerNamespace)
 }
 
-func (r *CertificateBundleReconciler) reconcileTLSSecret(ctx context.Context, desired *corev1.Secret) error {
+func (r *CertificateBundleReconciler) reconcileTLSSecret(ctx context.Context, desired *corev1.Secret) (string, error) {
 	current := &corev1.Secret{}
 	key := client.ObjectKeyFromObject(desired)
 	if err := r.Get(ctx, key, current); err != nil {
 		if apierrors.IsNotFound(err) {
-			return r.Create(ctx, desired)
+			return observability.OperationCreate, r.Create(ctx, desired)
 		}
-		return err
+		return "", err
+	}
+
+	if current.Type == desired.Type && secretDataEqual(current.Data, desired.Data) {
+		return observability.OperationNoop, nil
 	}
 
 	current.Type = desired.Type
 	current.Data = desired.Data
-	return r.Update(ctx, current)
+	return observability.OperationUpdate, r.Update(ctx, current)
 }
 
 func (r *CertificateBundleReconciler) patchStatus(ctx context.Context, bundle *certificatev1alpha1.CertificateBundle, status certificatev1alpha1.CertificateBundleStatus) error {
@@ -196,7 +224,19 @@ func (r *CertificateBundleReconciler) patchStatus(ctx context.Context, bundle *c
 	if equalBundleStatus(base.Status, bundle.Status) {
 		return nil
 	}
-	return r.Status().Patch(ctx, bundle, client.MergeFrom(base))
+	if err := r.Status().Patch(ctx, bundle, client.MergeFrom(base)); err != nil {
+		return err
+	}
+	observability.EmitConditionTransitions(
+		r.Recorder,
+		bundle,
+		base.Status.Conditions,
+		bundle.Status.Conditions,
+		common.ConditionCredentialsReady,
+		common.ConditionCertificateReady,
+		common.ConditionReady,
+	)
+	return nil
 }
 
 func resetConditions(conditions []metav1.Condition) []metav1.Condition {
@@ -276,6 +316,19 @@ func equalTime(a, b *metav1.Time) bool {
 		return true
 	}
 	return a.Equal(b)
+}
+
+func secretDataEqual(a, b map[string][]byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		other, found := b[key]
+		if !found || string(value) != string(other) {
+			return false
+		}
+	}
+	return true
 }
 
 func conditionEquals(a, b metav1.Condition) bool {
