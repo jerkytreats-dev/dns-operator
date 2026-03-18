@@ -14,8 +14,6 @@ import (
 )
 
 const (
-	ZoneConfigMapName   = "zone-internal-example-test"
-	ZoneConfigMapKey    = "db.internal.example.test"
 	ZoneSyncRequestName = "zone-sync"
 	defaultTTL          = int32(300)
 )
@@ -28,14 +26,23 @@ type AuthoritativeRecord struct {
 }
 
 type RenderedZone struct {
+	Zone          string
 	ConfigMapName string
 	DataKey       string
 	Content       string
 	Hash          string
 }
 
-func RecordForDNSRecord(record dnsv1alpha1.DNSRecord) (AuthoritativeRecord, error) {
-	if err := validation.ValidateManagedHostname(record.Spec.Hostname); err != nil {
+func ZoneConfigMapName(zone string) string {
+	return "zone-" + strings.ReplaceAll(zone, ".", "-")
+}
+
+func ZoneConfigMapKey(zone string) string {
+	return "db." + zone
+}
+
+func RecordForDNSRecord(policy validation.ZonePolicy, record dnsv1alpha1.DNSRecord) (AuthoritativeRecord, error) {
+	if err := policy.ValidateAuthoritativeHostname(record.Spec.Hostname); err != nil {
 		return AuthoritativeRecord{}, err
 	}
 
@@ -58,8 +65,8 @@ func RecordForDNSRecord(record dnsv1alpha1.DNSRecord) (AuthoritativeRecord, erro
 	}, nil
 }
 
-func RecordForPublishedService(service publishv1alpha1.PublishedService) (AuthoritativeRecord, error) {
-	if err := validation.ValidateManagedHostname(service.Spec.Hostname); err != nil {
+func RecordForPublishedService(policy validation.ZonePolicy, service publishv1alpha1.PublishedService) (AuthoritativeRecord, error) {
+	if err := policy.ValidateAuthoritativeHostname(service.Spec.Hostname); err != nil {
 		return AuthoritativeRecord{}, err
 	}
 
@@ -80,8 +87,8 @@ func RecordForPublishedService(service publishv1alpha1.PublishedService) (Author
 	}, nil
 }
 
-func RecordForPublishedServiceTarget(service publishv1alpha1.PublishedService, target string) (AuthoritativeRecord, error) {
-	if err := validation.ValidateManagedHostname(service.Spec.Hostname); err != nil {
+func RecordForPublishedServiceTarget(policy validation.ZonePolicy, service publishv1alpha1.PublishedService, target string) (AuthoritativeRecord, error) {
+	if err := policy.ValidateAuthoritativeHostname(service.Spec.Hostname); err != nil {
 		return AuthoritativeRecord{}, err
 	}
 	if target == "" {
@@ -101,11 +108,15 @@ func RecordForPublishedServiceTarget(service publishv1alpha1.PublishedService, t
 	}, nil
 }
 
-func RenderZone(records []AuthoritativeRecord) RenderedZone {
+func RenderZone(policy validation.ZonePolicy, records []AuthoritativeRecord) (RenderedZone, error) {
 	aggregated := map[string]AuthoritativeRecord{}
 	keys := make([]string, 0, len(records))
+	zone := policy.AuthoritativeZone()
 
 	for _, record := range records {
+		if err := policy.ValidateAuthoritativeHostname(record.Hostname); err != nil {
+			return RenderedZone{}, err
+		}
 		key := fmt.Sprintf("%s|%s|%d", record.Hostname, record.Type, record.TTL)
 		existing, found := aggregated[key]
 		if !found {
@@ -126,13 +137,13 @@ func RenderZone(records []AuthoritativeRecord) RenderedZone {
 
 	var builder strings.Builder
 	builder.WriteString("$ORIGIN ")
-	builder.WriteString(validation.ManagedZone)
+	builder.WriteString(zone)
 	builder.WriteString(".\n")
 	builder.WriteString("$TTL 300\n")
 	builder.WriteString("@ IN SOA ns1.")
-	builder.WriteString(validation.ManagedZone)
+	builder.WriteString(zone)
 	builder.WriteString(". hostmaster.")
-	builder.WriteString(validation.ManagedZone)
+	builder.WriteString(zone)
 	builder.WriteString(". (\n")
 	builder.WriteString("  ")
 	builder.WriteString(zoneSerial(keys, aggregated))
@@ -143,7 +154,7 @@ func RenderZone(records []AuthoritativeRecord) RenderedZone {
 	builder.WriteString("  300 ; minimum\n")
 	builder.WriteString(")\n")
 	builder.WriteString("@ IN NS ns1.")
-	builder.WriteString(validation.ManagedZone)
+	builder.WriteString(zone)
 	builder.WriteString(".\n")
 	builder.WriteString("ns1 IN A 127.0.0.1\n")
 
@@ -151,8 +162,12 @@ func RenderZone(records []AuthoritativeRecord) RenderedZone {
 		record := aggregated[key]
 		values := uniqueSorted(record.Values)
 		for _, value := range values {
+			relativeName, err := policy.RelativeName(record.Hostname)
+			if err != nil {
+				return RenderedZone{}, err
+			}
 			builder.WriteString(fmt.Sprintf("%s %d IN %s %s\n",
-				validation.RelativeName(record.Hostname),
+				relativeName,
 				record.TTL,
 				record.Type,
 				renderValue(record.Type, value),
@@ -163,11 +178,12 @@ func RenderZone(records []AuthoritativeRecord) RenderedZone {
 	content := builder.String()
 
 	return RenderedZone{
-		ConfigMapName: ZoneConfigMapName,
-		DataKey:       ZoneConfigMapKey,
+		Zone:          zone,
+		ConfigMapName: ZoneConfigMapName(zone),
+		DataKey:       ZoneConfigMapKey(zone),
 		Content:       content,
 		Hash:          sha1Hex(content),
-	}
+	}, nil
 }
 
 func validateRecordValue(recordType, value string) error {

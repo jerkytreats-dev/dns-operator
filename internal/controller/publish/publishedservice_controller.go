@@ -10,6 +10,7 @@ import (
 	publishv1alpha1 "github.com/jerkytreats/dns-operator/api/publish/v1alpha1"
 	"github.com/jerkytreats/dns-operator/internal/observability"
 	publishdomain "github.com/jerkytreats/dns-operator/internal/publish"
+	"github.com/jerkytreats/dns-operator/internal/validation"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -31,8 +32,9 @@ const publishRequeueInterval = 2 * time.Minute
 
 type PublishedServiceReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme     *runtime.Scheme
+	Recorder   record.EventRecorder
+	ZonePolicy validation.ZonePolicy
 }
 
 // +kubebuilder:rbac:groups=publish.jerkytreats.dev,resources=publishedservices,verbs=get;list;watch
@@ -67,7 +69,7 @@ func (r *PublishedServiceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	rendered, serviceStatuses, err := publishdomain.BuildRuntime(services.Items, bundles.Items, bundleSecrets)
+	rendered, serviceStatuses, err := publishdomain.BuildRuntime(services.Items, bundles.Items, bundleSecrets, r.zonePolicy().ValidatePublishedHostname)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("build runtime config: %w", err)
 	}
@@ -103,6 +105,13 @@ func (r *PublishedServiceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *PublishedServiceReconciler) zonePolicy() validation.ZonePolicy {
+	if r.ZonePolicy.AuthoritativeZone() != "" {
+		return r.ZonePolicy
+	}
+	return validation.DefaultZonePolicy()
 }
 
 func (r *PublishedServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {

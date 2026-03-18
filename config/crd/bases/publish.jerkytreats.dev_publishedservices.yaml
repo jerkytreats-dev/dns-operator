@@ -84,7 +84,7 @@ spec:
                 type: object
               hostname:
                 minLength: 1
-                pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+internal\.example\.test$
+                pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               publishMode:
                 enum:

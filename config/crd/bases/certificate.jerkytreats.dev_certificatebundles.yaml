@@ -181,6 +181,9 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              consecutiveFailures:
+                format: int32
+                type: integer
               effectiveDomains:
                 items:
                   type: string
@@ -188,7 +191,12 @@ spec:
               expiresAt:
                 format: date-time
                 type: string
+              lastFailureClass:
+                type: string
               lastIssuedAt:
+                format: date-time
+                type: string
+              nextAttemptAt:
                 format: date-time
                 type: string
               observedGeneration:

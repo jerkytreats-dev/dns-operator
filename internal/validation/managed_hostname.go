@@ -4,35 +4,113 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"sort"
 	"strings"
 )
 
-const ManagedZone = "internal.example.test"
+const DefaultAuthoritativeZone = "internal.example.test"
 
 var hostnamePattern = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
-func ValidateManagedHostname(hostname string) error {
-	if hostname == "" {
-		return fmt.Errorf("hostname cannot be empty")
+type ZonePolicy struct {
+	publishZones      []string
+	authoritativeZone string
+}
+
+func NewZonePolicy(publishZones []string, authoritativeZone string) (ZonePolicy, error) {
+	normalizedAuthoritativeZone, err := normalizeZone(authoritativeZone)
+	if err != nil {
+		return ZonePolicy{}, fmt.Errorf("authoritative zone: %w", err)
 	}
 
-	if hostname != strings.ToLower(hostname) {
-		return fmt.Errorf("hostname must be lowercase")
+	normalizedPublishZones := make([]string, 0, len(publishZones))
+	seen := map[string]struct{}{}
+	for _, zone := range publishZones {
+		normalizedZone, err := normalizeZone(zone)
+		if err != nil {
+			return ZonePolicy{}, fmt.Errorf("publish zone %q: %w", zone, err)
+		}
+		if _, found := seen[normalizedZone]; found {
+			continue
+		}
+		seen[normalizedZone] = struct{}{}
+		normalizedPublishZones = append(normalizedPublishZones, normalizedZone)
 	}
-
-	if strings.HasSuffix(hostname, ".") {
-		return fmt.Errorf("hostname must not end with a dot")
+	if len(normalizedPublishZones) == 0 {
+		normalizedPublishZones = []string{normalizedAuthoritativeZone}
 	}
+	sort.Strings(normalizedPublishZones)
 
-	if !strings.HasSuffix(hostname, "."+ManagedZone) {
-		return fmt.Errorf("hostname must be within %s", ManagedZone)
+	return ZonePolicy{
+		publishZones:      normalizedPublishZones,
+		authoritativeZone: normalizedAuthoritativeZone,
+	}, nil
+}
+
+func MustNewZonePolicy(publishZones []string, authoritativeZone string) ZonePolicy {
+	policy, err := NewZonePolicy(publishZones, authoritativeZone)
+	if err != nil {
+		panic(err)
 	}
+	return policy
+}
 
-	if !hostnamePattern.MatchString(hostname) {
-		return fmt.Errorf("hostname is not a valid DNS name")
+func DefaultZonePolicy() ZonePolicy {
+	return MustNewZonePolicy([]string{DefaultAuthoritativeZone}, DefaultAuthoritativeZone)
+}
+
+func (p ZonePolicy) PublishZones() []string {
+	return append([]string(nil), p.publishZones...)
+}
+
+func (p ZonePolicy) AuthoritativeZone() string {
+	return p.authoritativeZone
+}
+
+func (p ZonePolicy) ValidatePublishedHostname(hostname string) error {
+	if err := ValidateFQDN(hostname); err != nil {
+		return err
 	}
+	for _, zone := range p.publishZones {
+		if HostnameInZone(hostname, zone) {
+			return nil
+		}
+	}
+	return fmt.Errorf("hostname must be within one of %s", strings.Join(p.publishZones, ", "))
+}
 
+func (p ZonePolicy) ValidateAuthoritativeHostname(hostname string) error {
+	if err := ValidateFQDN(hostname); err != nil {
+		return err
+	}
+	if !HostnameInZone(hostname, p.authoritativeZone) {
+		return fmt.Errorf("hostname must be within authoritative zone %s", p.authoritativeZone)
+	}
 	return nil
+}
+
+func (p ZonePolicy) IsAuthoritativeHostname(hostname string) bool {
+	return p.ValidateAuthoritativeHostname(hostname) == nil
+}
+
+func (p ZonePolicy) RelativeName(hostname string) (string, error) {
+	if err := p.ValidateAuthoritativeHostname(hostname); err != nil {
+		return "", err
+	}
+	if hostname == p.authoritativeZone {
+		return "@", nil
+	}
+	return strings.TrimSuffix(hostname, "."+p.authoritativeZone), nil
+}
+
+func HostnameInZone(hostname, zone string) bool {
+	hostname = strings.TrimSpace(strings.ToLower(strings.TrimSuffix(hostname, ".")))
+	zone = strings.TrimSpace(strings.ToLower(strings.TrimSuffix(zone, ".")))
+	return hostname == zone || strings.HasSuffix(hostname, "."+zone)
+}
+
+func ValidateManagedHostname(hostname string) error {
+	return DefaultZonePolicy().ValidateAuthoritativeHostname(hostname)
 }
 
 func ValidateFQDN(hostname string) error {
@@ -75,10 +153,20 @@ func InferRecordFromAddress(address string) (string, string, error) {
 }
 
 func RelativeName(hostname string) string {
-	trimmedZone := "." + ManagedZone
-	if hostname == ManagedZone {
-		return "@"
+	relativeName, err := DefaultZonePolicy().RelativeName(hostname)
+	if err != nil {
+		return hostname
 	}
+	return relativeName
+}
 
-	return strings.TrimSuffix(hostname, trimmedZone)
+func normalizeZone(zone string) (string, error) {
+	normalizedZone := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(zone, ".")))
+	if normalizedZone == "" {
+		return "", fmt.Errorf("zone cannot be empty")
+	}
+	if err := ValidateFQDN(normalizedZone); err != nil {
+		return "", err
+	}
+	return normalizedZone, nil
 }

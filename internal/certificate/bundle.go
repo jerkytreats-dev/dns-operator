@@ -27,6 +27,7 @@ const (
 func EffectiveDomains(
 	bundle certificatev1alpha1.CertificateBundle,
 	services []publishv1alpha1.PublishedService,
+	serviceHostnameValidator func(string) error,
 ) ([]string, error) {
 	selector := labels.Everything()
 	if bundle.Spec.PublishedServiceSelector != nil && len(bundle.Spec.PublishedServiceSelector.MatchLabels) > 0 {
@@ -49,6 +50,11 @@ func EffectiveDomains(
 		}
 		if service.Spec.TLS == nil || service.Spec.TLS.Mode != publishv1alpha1.TLSModeSharedSAN {
 			continue
+		}
+		if serviceHostnameValidator != nil {
+			if err := serviceHostnameValidator(service.Spec.Hostname); err != nil {
+				return nil, fmt.Errorf("selected published service %s/%s has invalid hostname: %w", service.Namespace, service.Name, err)
+			}
 		}
 		seen[service.Spec.Hostname] = struct{}{}
 	}

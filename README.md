@@ -1,6 +1,6 @@
 # dns-operator
 
-`dns-operator` is a Kubernetes operator for internal publishing under `internal.example.test`.
+`dns-operator` is a Kubernetes operator for internal publishing with an operator-managed authoritative zone and configurable published hostname ownership.
 
 It manages:
 
@@ -8,6 +8,23 @@ It manages:
 - browser-facing internal publishing through `PublishedService`
 - shared SAN certificate state through `CertificateBundle`
 - Tailscale split-DNS bootstrap and repair through `TailnetDNSConfig`
+
+## Zone Ownership
+
+`PublishedService.spec.hostname` must fall under one of the manager's `--publish-zones`.
+
+- Hostnames under `--authoritative-zone` are rendered into the operator-managed authoritative DNS zone.
+- Hostnames under another configured publish zone remain valid for HTTPS runtime and `CertificateBundle` SAN derivation, but they are not projected into the operator-managed DNS zone.
+
+The manager deployment exposes both flags directly so GitOps overlays can patch them:
+
+```yaml
+args:
+  - --authoritative-zone=internal.example.test
+  - --publish-zones=internal.example.test,test.jerkytreats.dev
+```
+
+This lets an Argo CD overlay keep internal authoritative DNS scoped to `internal.example.test` while still allowing approved external publish names such as `*.test.jerkytreats.dev`.
 
 ## Getting Started
 
@@ -70,6 +87,14 @@ go run ./cmd/import-reference \
 ```
 
 See `docs/migration/import-reference.md` for details on supported inputs, emitted resources, and safety notes.
+
+### Certificate Retry Behavior
+
+`CertificateBundle` performs a Cloudflare DNS preflight before it asks Let's Encrypt to issue or renew a certificate.
+
+- If `_acme-challenge` TXT propagation is not visible yet, the bundle records `status.lastFailureClass=DNSPreflightFailed` and schedules `status.nextAttemptAt` without consuming an ACME order.
+- If the ACME provider rate-limits issuance, the bundle records `status.lastFailureClass=RateLimited` and backs off more aggressively.
+- `status.consecutiveFailures` tracks repeated failures of the same class so cooldown windows can grow conservatively.
 
 ### To Uninstall
 **Delete the instances (CRs) from the cluster:**

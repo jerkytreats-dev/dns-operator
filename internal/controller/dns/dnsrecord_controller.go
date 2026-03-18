@@ -11,6 +11,7 @@ import (
 	dnsdomain "github.com/jerkytreats/dns-operator/internal/dns"
 	"github.com/jerkytreats/dns-operator/internal/observability"
 	publishdomain "github.com/jerkytreats/dns-operator/internal/publish"
+	"github.com/jerkytreats/dns-operator/internal/validation"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -32,8 +33,9 @@ import (
 // DNSRecordReconciler keeps the authoritative DNS zone artifact in sync.
 type DNSRecordReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme     *runtime.Scheme
+	Recorder   record.EventRecorder
+	ZonePolicy validation.ZonePolicy
 }
 
 // +kubebuilder:rbac:groups=dns.jerkytreats.dev,resources=dnsrecords,verbs=get;list;watch
@@ -73,7 +75,7 @@ func (r *DNSRecordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	for i := range records.Items {
 		record := records.Items[i]
-		projectedRecord, err := dnsdomain.RecordForDNSRecord(record)
+		projectedRecord, err := dnsdomain.RecordForDNSRecord(r.zonePolicy(), record)
 		if err != nil {
 			recordErrors[client.ObjectKeyFromObject(&record)] = err
 			continue
@@ -91,7 +93,10 @@ func (r *DNSRecordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		projected = append(projected, projectedRecord)
 	}
 
-	rendered := dnsdomain.RenderZone(projected)
+	rendered, err := dnsdomain.RenderZone(r.zonePolicy(), projected)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("render authoritative zone: %w", err)
+	}
 	operation, configMapErr := r.reconcileZoneConfigMap(ctx, req.Namespace, rendered)
 	observability.RecordArtifactUpdate("dns-dnsrecord", "zone_configmap", operation)
 	if configMapErr != nil {
@@ -180,12 +185,15 @@ func (r *DNSRecordReconciler) projectPublishedServiceRecord(
 	publishRuntimeTargetErr error,
 ) (dnsdomain.AuthoritativeRecord, error) {
 	if service.Spec.PublishMode != publishv1alpha1.PublishModeHTTPSProxy {
-		return dnsdomain.RecordForPublishedService(service)
+		return dnsdomain.RecordForPublishedService(r.zonePolicy(), service)
+	}
+	if !r.zonePolicy().IsAuthoritativeHostname(service.Spec.Hostname) {
+		return dnsdomain.AuthoritativeRecord{}, fmt.Errorf("hostname %q is outside authoritative zone %s", service.Spec.Hostname, r.zonePolicy().AuthoritativeZone())
 	}
 	if publishRuntimeTargetErr != nil {
 		return dnsdomain.AuthoritativeRecord{}, publishRuntimeTargetErr
 	}
-	return dnsdomain.RecordForPublishedServiceTarget(service, publishRuntimeTarget)
+	return dnsdomain.RecordForPublishedServiceTarget(r.zonePolicy(), service, publishRuntimeTarget)
 }
 
 func (r *DNSRecordReconciler) resolvePublishRuntimeTarget(ctx context.Context, namespace string) (string, error) {
@@ -218,7 +226,7 @@ func (r *DNSRecordReconciler) reconcileZoneConfigMap(ctx context.Context, namesp
 			},
 			Annotations: map[string]string{
 				"dns.jerkytreats.dev/hash": rendered.Hash,
-				"dns.jerkytreats.dev/zone": "internal.example.test",
+				"dns.jerkytreats.dev/zone": rendered.Zone,
 			},
 		},
 		Data: map[string]string{
@@ -331,7 +339,11 @@ func (r *DNSRecordReconciler) updatePublishedServiceStatus(
 	service.Status.Conditions = resetConditions(service.Status.Conditions)
 
 	if projectionErr != nil {
-		setFalseCondition(&service.Status.Conditions, common.ConditionDNSReady, "ProjectionFailed", projectionErr.Error(), service.Generation)
+		if !r.zonePolicy().IsAuthoritativeHostname(service.Spec.Hostname) {
+			setTrueCondition(&service.Status.Conditions, common.ConditionDNSReady, "NotAuthoritative", "hostname is outside the authoritative dns zone and will not be rendered into the operator-managed zone", service.Generation)
+		} else {
+			setFalseCondition(&service.Status.Conditions, common.ConditionDNSReady, "ProjectionFailed", projectionErr.Error(), service.Generation)
+		}
 	} else if configMapErr != nil {
 		setFalseCondition(&service.Status.Conditions, common.ConditionDNSReady, "ConfigMapUpdateFailed", configMapErr.Error(), service.Generation)
 	} else {
@@ -353,6 +365,13 @@ func (r *DNSRecordReconciler) updatePublishedServiceStatus(
 		common.ConditionDNSReady,
 	)
 	return nil
+}
+
+func (r *DNSRecordReconciler) zonePolicy() validation.ZonePolicy {
+	if r.ZonePolicy.AuthoritativeZone() != "" {
+		return r.ZonePolicy
+	}
+	return validation.DefaultZonePolicy()
 }
 
 func resetConditions(conditions []metav1.Condition) []metav1.Condition {

@@ -34,7 +34,7 @@ type DNSRecordOwner struct {
 
 type DNSRecordSpec struct {
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+internal\.example\.test$`
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Hostname string `json:"hostname"`
 
 	// +kubebuilder:validation:Enum=A;AAAA;CNAME;TXT

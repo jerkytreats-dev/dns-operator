@@ -58,6 +58,7 @@ func BuildRuntime(
 	services []publishv1alpha1.PublishedService,
 	bundles []certificatev1alpha1.CertificateBundle,
 	bundleSecrets map[types.NamespacedName]*corev1.Secret,
+	hostnameValidator func(string) error,
 ) (RenderedRuntime, map[types.NamespacedName]ServiceRuntimeStatus, error) {
 	statuses := make(map[types.NamespacedName]ServiceRuntimeStatus, len(services))
 	sites := make([]runtimeSite, 0, len(services))
@@ -79,6 +80,15 @@ func BuildRuntime(
 		}
 		if service.Spec.PublishMode == publishv1alpha1.PublishModeHTTPSProxy {
 			status.URL = "https://" + service.Spec.Hostname
+		}
+
+		if hostnameValidator != nil {
+			if err := hostnameValidator(service.Spec.Hostname); err != nil {
+				status.Reason = ReasonValidationFailed
+				status.Err = err
+				statuses[key] = status
+				continue
+			}
 		}
 
 		if service.Spec.PublishMode != publishv1alpha1.PublishModeHTTPSProxy {

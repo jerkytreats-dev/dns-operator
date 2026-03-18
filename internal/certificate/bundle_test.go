@@ -49,7 +49,7 @@ func TestEffectiveDomains(t *testing.T) {
 		},
 	}
 
-	domains, err := EffectiveDomains(bundle, services)
+	domains, err := EffectiveDomains(bundle, services, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

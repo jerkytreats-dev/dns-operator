@@ -82,6 +82,12 @@ type CertificateBundleStatus struct {
 
 	LastIssuedAt *metav1.Time `json:"lastIssuedAt,omitempty"`
 
+	LastFailureClass string `json:"lastFailureClass,omitempty"`
+
+	ConsecutiveFailures int32 `json:"consecutiveFailures,omitempty"`
+
+	NextAttemptAt *metav1.Time `json:"nextAttemptAt,omitempty"`
+
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

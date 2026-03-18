@@ -64,7 +64,7 @@ type PublishAuth struct {
 // +kubebuilder:validation:XValidation:rule="self.publishMode != 'httpsProxy' || has(self.tls)",message="tls is required when publishMode is httpsProxy"
 type PublishedServiceSpec struct {
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+internal\.example\.test$`
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Hostname string `json:"hostname"`
 
 	// +kubebuilder:validation:Enum=httpsProxy;dnsOnly

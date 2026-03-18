@@ -8,6 +8,8 @@ metadata:
   name: app
   namespace: dns-operator-system
 spec:
+  # Hostnames must fall under one of the manager's --publish-zones.
+  # Only hostnames under --authoritative-zone are projected into the operator-managed DNS zone.
   hostname: app.internal.example.test
   publishMode: httpsProxy
   backend:

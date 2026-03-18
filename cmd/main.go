@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -44,6 +45,7 @@ import (
 	publishcontroller "github.com/jerkytreats/dns-operator/internal/controller/publish"
 	tailscalecontroller "github.com/jerkytreats/dns-operator/internal/controller/tailscale"
 	"github.com/jerkytreats/dns-operator/internal/observability"
+	"github.com/jerkytreats/dns-operator/internal/validation"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -71,6 +73,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var authoritativeZone string
+	var publishZones string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -89,6 +93,10 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&authoritativeZone, "authoritative-zone", validation.DefaultAuthoritativeZone,
+		"The DNS zone this operator renders into authoritative zone artifacts.")
+	flag.StringVar(&publishZones, "publish-zones", validation.DefaultAuthoritativeZone,
+		"Comma-separated list of DNS zones allowed for PublishedService hostnames and bundle-derived SANs.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -96,6 +104,12 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	zonePolicy, err := validation.NewZonePolicy(splitCSV(publishZones), authoritativeZone)
+	if err != nil {
+		setupLog.Error(err, "invalid zone policy configuration")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -189,25 +203,28 @@ func main() {
 	}
 
 	if err := (&dnscontroller.DNSRecordReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("dns-dnsrecord"),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Recorder:   mgr.GetEventRecorderFor("dns-dnsrecord"),
+		ZonePolicy: zonePolicy,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DNSRecord")
 		os.Exit(1)
 	}
 	if err := (&certificatecontroller.CertificateBundleReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("certificate-certificatebundle"),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Recorder:   mgr.GetEventRecorderFor("certificate-certificatebundle"),
+		ZonePolicy: zonePolicy,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "CertificateBundle")
 		os.Exit(1)
 	}
 	if err := (&publishcontroller.PublishedServiceReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("publish-publishedservice"),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Recorder:   mgr.GetEventRecorderFor("publish-publishedservice"),
+		ZonePolicy: zonePolicy,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PublishedService")
 		os.Exit(1)
@@ -242,4 +259,20 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func splitCSV(input string) []string {
+	if input == "" {
+		return nil
+	}
+	parts := strings.Split(input, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
 }

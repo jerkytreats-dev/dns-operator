@@ -1,6 +1,7 @@
 package publish
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestBuildRuntimeRendersStableCaddyfile(t *testing.T) {
 		},
 	}
 
-	rendered, statuses, err := BuildRuntime(services, []certificatev1alpha1.CertificateBundle{bundle}, secrets)
+	rendered, statuses, err := BuildRuntime(services, []certificatev1alpha1.CertificateBundle{bundle}, secrets, nil)
 	if err != nil {
 		t.Fatalf("build runtime: %v", err)
 	}
@@ -160,6 +161,7 @@ func TestBuildRuntimeReportsMissingCertificateCoverage(t *testing.T) {
 		[]publishv1alpha1.PublishedService{service},
 		[]certificatev1alpha1.CertificateBundle{bundle},
 		map[types.NamespacedName]*corev1.Secret{},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("build runtime: %v", err)
@@ -168,5 +170,37 @@ func TestBuildRuntimeReportsMissingCertificateCoverage(t *testing.T) {
 	status := statuses[types.NamespacedName{Name: "app", Namespace: "dns-operator-system"}]
 	if status.Err == nil || !strings.Contains(status.Err.Error(), "does not yet cover hostname") {
 		t.Fatalf("expected missing coverage error, got %v", status.Err)
+	}
+}
+
+func TestBuildRuntimeRejectsDisallowedPublishZone(t *testing.T) {
+	t.Parallel()
+
+	service := publishv1alpha1.PublishedService{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "dns-operator-system"},
+		Spec: publishv1alpha1.PublishedServiceSpec{
+			Hostname:    "app.example.com",
+			PublishMode: publishv1alpha1.PublishModeDNSOnly,
+		},
+	}
+
+	_, statuses, err := BuildRuntime(
+		[]publishv1alpha1.PublishedService{service},
+		nil,
+		map[types.NamespacedName]*corev1.Secret{},
+		func(hostname string) error {
+			if hostname == "app.example.com" {
+				return fmt.Errorf("hostname must be within one of internal.example.test, test.jerkytreats.dev")
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("build runtime: %v", err)
+	}
+
+	status := statuses[types.NamespacedName{Name: "app", Namespace: "dns-operator-system"}]
+	if status.Err == nil {
+		t.Fatal("expected zone validation error")
 	}
 }
