@@ -15,10 +15,10 @@ import (
 	dnsv1alpha1 "github.com/jerkytreats/dns-operator/api/dns/v1alpha1"
 	publishv1alpha1 "github.com/jerkytreats/dns-operator/api/publish/v1alpha1"
 	tailscalev1alpha1 "github.com/jerkytreats/dns-operator/api/tailscale/v1alpha1"
+	yamlv3 "gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
-	yamlv3 "gopkg.in/yaml.v3"
 )
 
 const (
@@ -30,14 +30,14 @@ const (
 )
 
 type ImportInput struct {
-	Namespace               string
-	BundleName              string
-	NameserverAddress       string
-	ConfigYAML              []byte
-	ZoneFile                []byte
-	ProxyRulesJSON          []byte
-	CertificateDomainsJSON  []byte
-	Caddyfile               []byte
+	Namespace              string
+	BundleName             string
+	NameserverAddress      string
+	ConfigYAML             []byte
+	ZoneFile               []byte
+	ProxyRulesJSON         []byte
+	CertificateDomainsJSON []byte
+	Caddyfile              []byte
 }
 
 type ImportReport struct {
@@ -57,18 +57,18 @@ type ImportResult struct {
 
 type legacyConfig struct {
 	Tailscale struct {
-		APIKey string `yaml:"api_key"`
+		APIKey  string `yaml:"api_key"`
 		Tailnet string `yaml:"tailnet"`
-		DNS struct {
+		DNS     struct {
 			Zone string `yaml:"zone"`
 		} `yaml:"dns"`
 	} `yaml:"tailscale"`
 	Certificate struct {
-		Email               string `yaml:"email"`
-		Domain              string `yaml:"domain"`
-		CloudflareAPIToken  string `yaml:"cloudflare_api_token"`
-		UseProductionCerts  bool   `yaml:"use_production_certs"`
-		Renewal             struct {
+		Email              string `yaml:"email"`
+		Domain             string `yaml:"domain"`
+		CloudflareAPIToken string `yaml:"cloudflare_api_token"`
+		UseProductionCerts bool   `yaml:"use_production_certs"`
+		Renewal            struct {
 			RenewBefore string `yaml:"renew_before"`
 		} `yaml:"renewal"`
 	} `yaml:"certificate"`
@@ -445,7 +445,7 @@ func buildSecret(namespace, name, key, value string) *corev1.Secret {
 			Namespace: namespace,
 			Labels:    baseLabels(),
 		},
-		Type: corev1.SecretTypeOpaque,
+		Type:       corev1.SecretTypeOpaque,
 		StringData: map[string]string{key: value},
 	}
 }
