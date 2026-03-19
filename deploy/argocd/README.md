@@ -1,6 +1,8 @@
 # Argo Install Contract
 
-`dns-operator` install artifacts in this repository are intended to be synced by Argo from `deploy/argocd/overlays/<cluster-name>`.
+`dns-operator` install artifacts in this repository can be synced by Argo from `deploy/argocd/overlays/<cluster-name>` or consumed through the Helm chart at `charts/dns-operator`.
+
+The preferred long term integration point is the Helm chart with an infra owned values file.
 
 ## Sync Order
 

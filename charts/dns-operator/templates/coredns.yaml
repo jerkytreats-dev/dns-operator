@@ -1,0 +1,175 @@
+{{- if .Values.runtime.coredns.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "dns-operator.corednsServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coredns
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dns-operator.corednsCorefileConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coredns
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health :8080
+        ready :8181
+        reload 5s
+    }
+
+    {{ .Values.operator.authoritativeZone }}:53 {
+        errors
+        log
+        health :8080
+        ready :8181
+        reload 5s
+        file /etc/coredns/zones/{{ include "dns-operator.zoneConfigMapKey" . }} {{ .Values.operator.authoritativeZone }}
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dns-operator.corednsEmptyZoneConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coredns
+data:
+  {{ include "dns-operator.zoneConfigMapKey" . }}: |
+    $ORIGIN {{ .Values.operator.authoritativeZone }}.
+    $TTL 300
+    @ IN SOA ns1.{{ .Values.operator.authoritativeZone }}. hostmaster.{{ .Values.operator.authoritativeZone }}. (
+      2026000000 ; serial
+      120 ; refresh
+      60 ; retry
+      604800 ; expire
+      300 ; minimum
+    )
+    @ IN NS ns1.{{ .Values.operator.authoritativeZone }}.
+    ns1 IN A 127.0.0.1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dns-operator.fullname" . }}-coredns
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coredns
+spec:
+  replicas: {{ .Values.runtime.coredns.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dns-operator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: coredns
+  template:
+    metadata:
+      labels:
+        {{- include "dns-operator.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: coredns
+    spec:
+      serviceAccountName: {{ include "dns-operator.corednsServiceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: coredns
+          image: {{ printf "%s:%s" .Values.runtime.coredns.image.repository .Values.runtime.coredns.image.tag }}
+          imagePullPolicy: {{ .Values.runtime.coredns.image.pullPolicy }}
+          args:
+            - -conf
+            - /etc/coredns/Corefile
+          ports:
+            - name: dns-tcp
+              containerPort: 53
+              protocol: TCP
+            - name: dns-udp
+              containerPort: 53
+              protocol: UDP
+            - name: health
+              containerPort: 8080
+            - name: ready
+              containerPort: 8181
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: ready
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
+          resources:
+            {{- toYaml .Values.runtime.coredns.resources | nindent 12 }}
+          volumeMounts:
+            - name: coredns-corefile
+              mountPath: /etc/coredns/Corefile
+              subPath: Corefile
+              readOnly: true
+            - name: coredns-zone
+              mountPath: /etc/coredns/zones
+              readOnly: true
+            - name: coredns-tmp
+              mountPath: /tmp
+      volumes:
+        - name: coredns-corefile
+          configMap:
+            name: {{ include "dns-operator.corednsCorefileConfigMapName" . }}
+        - name: coredns-zone
+          projected:
+            sources:
+              - configMap:
+                  name: {{ include "dns-operator.corednsEmptyZoneConfigMapName" . }}
+              - configMap:
+                  name: {{ include "dns-operator.zoneConfigMapName" . }}
+                  optional: true
+        - name: coredns-tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dns-operator.authoritativeServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coredns
+  {{- with .Values.runtime.coredns.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.runtime.coredns.service.type }}
+  selector:
+    {{- include "dns-operator.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: coredns
+  ports:
+    - name: dns-tcp
+      port: 53
+      protocol: TCP
+      targetPort: dns-tcp
+    - name: dns-udp
+      port: 53
+      protocol: UDP
+      targetPort: dns-udp
+{{- end }}

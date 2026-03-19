@@ -1,0 +1,110 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/jerkytreats/dns-operator
+  tag: latest
+  pullPolicy: IfNotPresent
+
+operator:
+  replicaCount: 1
+  authoritativeZone: internal.example.test
+  publishZones:
+    - internal.example.test
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 128Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  metrics:
+    enabled: true
+    service:
+      enabled: true
+      port: 8443
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: ""
+
+runtime:
+  coredns:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: rancher/mirrored-coredns-coredns
+      tag: 1.13.1
+      pullPolicy: IfNotPresent
+    service:
+      type: LoadBalancer
+      annotations: {}
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 250m
+        memory: 128Mi
+  caddy:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: caddy
+      tag: "2"
+      pullPolicy: IfNotPresent
+    service:
+      type: LoadBalancer
+      annotations: {}
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 250m
+        memory: 128Mi
+
+secrets:
+  tailscaleAdmin:
+    name: tailscale-admin-credentials
+    key: api-key
+  cloudflare:
+    name: cloudflare-credentials
+    key: api-token
+
+tailnet:
+  name: example.ts.net
+
+bootstrap:
+  tailnetDNSEndpoint:
+    enabled: false
+    name: internal-authority
+    hostname: internal-authority
+    serviceName: ""
+  tailnetDNSConfig:
+    enabled: false
+    name: internal-zone
+    address: 198.51.100.53
+  certificateBundle:
+    enabled: false
+    name: internal-shared
+    issuer:
+      provider: letsencrypt-staging
+      email: admin@example.com
+    labelSelector:
+      publish.jerkytreats.dev/certificate-bundle: internal-shared
+    secretTemplateName: internal-example-test-shared-tls
+    renewBefore: 720h

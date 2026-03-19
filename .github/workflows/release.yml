@@ -13,6 +13,9 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: jerkytreats/dns-operator
+  CHART_PATH: charts/dns-operator
+  CHART_NAME: dns-operator
+  CHART_REGISTRY: oci://ghcr.io/jerkytreats/charts
 
 jobs:
   release:
@@ -29,8 +32,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
       - name: Run tests
         run: make test
+
+      - name: Lint chart
+        run: helm lint ${{ env.CHART_PATH }}
 
       - name: Resolve release tag
         id: release_tag
@@ -41,6 +50,13 @@ jobs:
             echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve chart version
+        id: chart_version
+        run: |
+          tag="${{ steps.release_tag.outputs.value }}"
+          version="${tag#v}"
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -50,6 +66,10 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in Helm to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username "${{ github.actor }}" --password-stdin
 
       - name: Extract image metadata
         id: meta
@@ -74,8 +94,26 @@ jobs:
       - name: Build installer bundle
         run: make build-installer IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.release_tag.outputs.value }}
 
+      - name: Package chart
+        run: |
+          mkdir -p dist/chart
+          helm package ${{ env.CHART_PATH }} \
+            --destination dist/chart \
+            --version ${{ steps.chart_version.outputs.value }} \
+            --app-version ${{ steps.release_tag.outputs.value }}
+
+      - name: Push chart
+        run: |
+          helm push dist/chart/${{ env.CHART_NAME }}-${{ steps.chart_version.outputs.value }}.tgz ${{ env.CHART_REGISTRY }}
+
       - name: Upload installer bundle
         uses: actions/upload-artifact@v4
         with:
           name: dns-operator-install-${{ steps.release_tag.outputs.value }}
           path: dist/install.yaml
+
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dns-operator-chart-${{ steps.chart_version.outputs.value }}
+          path: dist/chart/${{ env.CHART_NAME }}-${{ steps.chart_version.outputs.value }}.tgz

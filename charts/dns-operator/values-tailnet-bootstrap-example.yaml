@@ -1,0 +1,36 @@
+image:
+  repository: ghcr.io/jerkytreats/dns-operator
+  tag: latest
+
+operator:
+  authoritativeZone: internal.example.test
+  publishZones:
+    - internal.example.test
+
+runtime:
+  coredns:
+    service:
+      type: ClusterIP
+  caddy:
+    service:
+      type: ClusterIP
+
+tailnet:
+  name: example.ts.net
+
+bootstrap:
+  tailnetDNSEndpoint:
+    enabled: true
+    name: internal-authority
+    hostname: internal-authority
+  tailnetDNSConfig:
+    enabled: true
+    name: internal-zone
+
+secrets:
+  tailscaleAdmin:
+    name: tailscale-admin-credentials
+    key: api-key
+  cloudflare:
+    name: cloudflare-credentials
+    key: api-token

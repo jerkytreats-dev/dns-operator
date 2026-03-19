@@ -1,0 +1,139 @@
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "dns-operator.managerServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+---
+{{- end }}
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "dns-operator.fullname" . }}-manager-role
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets", "services"]
+    verbs: ["create", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["certificate.jerkytreats.dev"]
+    resources: ["certificatebundles"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["certificate.jerkytreats.dev"]
+    resources: ["certificatebundles/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["dns.jerkytreats.dev"]
+    resources: ["dnsrecords"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["dns.jerkytreats.dev"]
+    resources: ["dnsrecords/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["publish.jerkytreats.dev"]
+    resources: ["publishedservices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["publish.jerkytreats.dev"]
+    resources: ["publishedservices/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["tailscale.jerkytreats.dev"]
+    resources: ["tailnetdnsconfigs", "tailnetdnsendpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["tailscale.jerkytreats.dev"]
+    resources: ["tailnetdnsconfigs/status", "tailnetdnsendpoints/status"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "dns-operator.fullname" . }}-manager-rolebinding
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "dns-operator.fullname" . }}-manager-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dns-operator.managerServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "dns-operator.fullname" . }}-leader-election-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "dns-operator.fullname" . }}-leader-election-rolebinding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "dns-operator.fullname" . }}-leader-election-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dns-operator.managerServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if and .Values.operator.metrics.enabled .Values.operator.metrics.service.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "dns-operator.fullname" . }}-metrics-auth-role
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "dns-operator.fullname" . }}-metrics-auth-rolebinding
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "dns-operator.fullname" . }}-metrics-auth-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dns-operator.managerServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "dns-operator.fullname" . }}-metrics-reader
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+{{- end }}
+{{- end }}

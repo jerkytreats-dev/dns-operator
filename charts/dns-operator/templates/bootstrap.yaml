@@ -1,0 +1,75 @@
+{{- if .Values.bootstrap.tailnetDNSEndpoint.enabled }}
+apiVersion: tailscale.jerkytreats.dev/v1alpha1
+kind: TailnetDNSEndpoint
+metadata:
+  name: {{ .Values.bootstrap.tailnetDNSEndpoint.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+spec:
+  zone: {{ .Values.operator.authoritativeZone }}
+  tailnet: {{ .Values.tailnet.name }}
+  service:
+    ref:
+      name: {{ include "dns-operator.bootstrapEndpointServiceName" . }}
+  auth:
+    secretRef:
+      name: {{ .Values.secrets.tailscaleAdmin.name }}
+      key: {{ .Values.secrets.tailscaleAdmin.key }}
+  exposure:
+    mode: tailscaleVIPService
+    hostname: {{ .Values.bootstrap.tailnetDNSEndpoint.hostname }}
+{{- end }}
+{{- if .Values.bootstrap.tailnetDNSConfig.enabled }}
+---
+apiVersion: tailscale.jerkytreats.dev/v1alpha1
+kind: TailnetDNSConfig
+metadata:
+  name: {{ .Values.bootstrap.tailnetDNSConfig.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+spec:
+  zone: {{ .Values.operator.authoritativeZone }}
+  tailnet: {{ .Values.tailnet.name }}
+  nameserver:
+    {{- if .Values.bootstrap.tailnetDNSEndpoint.enabled }}
+    endpointRef:
+      name: {{ .Values.bootstrap.tailnetDNSEndpoint.name }}
+    {{- else }}
+    address: {{ .Values.bootstrap.tailnetDNSConfig.address }}
+    {{- end }}
+  auth:
+    secretRef:
+      name: {{ .Values.secrets.tailscaleAdmin.name }}
+      key: {{ .Values.secrets.tailscaleAdmin.key }}
+  behavior:
+    mode: bootstrapAndRepair
+{{- end }}
+{{- if .Values.bootstrap.certificateBundle.enabled }}
+---
+apiVersion: certificate.jerkytreats.dev/v1alpha1
+kind: CertificateBundle
+metadata:
+  name: {{ .Values.bootstrap.certificateBundle.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+spec:
+  mode: sharedSAN
+  publishedServiceSelector:
+    matchLabels:
+      {{- toYaml .Values.bootstrap.certificateBundle.labelSelector | nindent 6 }}
+  issuer:
+    provider: {{ .Values.bootstrap.certificateBundle.issuer.provider }}
+    email: {{ .Values.bootstrap.certificateBundle.issuer.email }}
+  challenge:
+    type: dns01
+    cloudflare:
+      apiTokenSecretRef:
+        name: {{ .Values.secrets.cloudflare.name }}
+        key: {{ .Values.secrets.cloudflare.key }}
+  secretTemplate:
+    name: {{ .Values.bootstrap.certificateBundle.secretTemplateName }}
+  renewBefore: {{ .Values.bootstrap.certificateBundle.renewBefore }}
+{{- end }}

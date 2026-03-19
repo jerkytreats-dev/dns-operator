@@ -1,0 +1,162 @@
+{{- if .Values.runtime.caddy.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "dns-operator.caddyServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: caddy
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dns-operator.caddyBootstrapConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: caddy
+data:
+  Caddyfile: |
+    {
+        admin off
+        auto_https off
+        log {
+            output stdout
+            format console
+            level INFO
+        }
+    }
+
+    import /etc/caddy/generated/*.caddy
+
+    :2019 {
+        respond /health "OK" 200
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dns-operator.caddyServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: caddy
+spec:
+  replicas: {{ .Values.runtime.caddy.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dns-operator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: caddy
+  template:
+    metadata:
+      labels:
+        {{- include "dns-operator.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: caddy
+    spec:
+      serviceAccountName: {{ include "dns-operator.caddyServiceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: caddy
+          image: {{ printf "%s:%s" .Values.runtime.caddy.image.repository .Values.runtime.caddy.image.tag }}
+          imagePullPolicy: {{ .Values.runtime.caddy.image.pullPolicy }}
+          args:
+            - run
+            - --config
+            - /etc/caddy/Caddyfile
+            - --adapter
+            - caddyfile
+            - --watch
+          ports:
+            - name: http
+              containerPort: 80
+            - name: https
+              containerPort: 443
+            - name: health
+              containerPort: 2019
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
+          resources:
+            {{- toYaml .Values.runtime.caddy.resources | nindent 12 }}
+          volumeMounts:
+            - name: caddy-bootstrap
+              mountPath: /etc/caddy/Caddyfile
+              subPath: Caddyfile
+              readOnly: true
+            - name: caddy-generated
+              mountPath: /etc/caddy/generated
+              readOnly: true
+            - name: caddy-certificates
+              mountPath: /etc/dns-operator/certs
+              readOnly: true
+            - name: caddy-data
+              mountPath: /data
+            - name: caddy-config
+              mountPath: /config
+            - name: caddy-tmp
+              mountPath: /tmp
+      volumes:
+        - name: caddy-bootstrap
+          configMap:
+            name: {{ include "dns-operator.caddyBootstrapConfigMapName" . }}
+        - name: caddy-generated
+          configMap:
+            name: caddy-runtime
+            optional: true
+        - name: caddy-certificates
+          secret:
+            secretName: caddy-runtime-certificates
+            optional: true
+        - name: caddy-data
+          emptyDir: {}
+        - name: caddy-config
+          emptyDir: {}
+        - name: caddy-tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dns-operator.caddyServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dns-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: caddy
+  {{- with .Values.runtime.caddy.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.runtime.caddy.service.type }}
+  selector:
+    {{- include "dns-operator.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: caddy
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+    - name: https
+      port: 443
+      targetPort: https
+{{- end }}
