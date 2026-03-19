@@ -238,7 +238,7 @@ func newLegoClient(user *acmeUser, providerName, cloudflareToken string) (*lego.
 	options := []dns01.ChallengeOption{
 		dns01.AddRecursiveNameservers(defaultRecursiveResolvers),
 		dns01.AddDNSTimeout(defaultChallengeTimeout),
-		dns01.DisableCompletePropagationRequirement(),
+		dns01.DisableAuthoritativeNssPropagationRequirement(),
 	}
 	if err := client.Challenge.SetDNS01Provider(dnsProvider, options...); err != nil {
 		return nil, fmt.Errorf("configure dns01 provider: %w", err)
