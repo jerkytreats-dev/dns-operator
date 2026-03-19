@@ -4,6 +4,8 @@
 
 The Tailscale integration should focus on split-DNS ownership for `internal.example.test`. Device discovery, device inventory, and device-backed DNS are no longer the product direction.
 
+Transport and exposure capability details are captured in [Tailscale DNS capability whitepaper](tailscale-dns-capabilities.md).
+
 ## Product Role
 
 Tailscale is required so that:
@@ -28,6 +30,7 @@ The legacy app uses Tailscale mostly for:
 The operator should use Tailscale for:
 
 - restricted nameserver configuration for the internal zone
+- a tailnet native endpoint for authoritative DNS reachability
 - drift detection for split-DNS settings
 - repair or re-bootstrap when the authoritative nameserver endpoint changes
 
@@ -65,5 +68,4 @@ Use a `TailnetDNSConfig` style resource to model:
 ## Summary
 
 The Tailscale domain should be narrowed to split-DNS bootstrap and repair. Device discovery and device CRDs are legacy concerns and should not shape the new architecture.
-
 

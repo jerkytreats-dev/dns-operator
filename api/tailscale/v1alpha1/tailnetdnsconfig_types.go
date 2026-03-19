@@ -29,9 +29,12 @@ type TailnetDNSAuth struct {
 	SecretRef common.SecretKeyReference `json:"secretRef"`
 }
 
+// +kubebuilder:validation:XValidation:rule="(has(self.address) && size(self.address) > 0 && !has(self.endpointRef)) || (!has(self.address) && has(self.endpointRef))",message="exactly one of address or endpointRef must be set"
 type TailnetNameserver struct {
 	// +kubebuilder:validation:MinLength=1
-	Address string `json:"address"`
+	Address string `json:"address,omitempty"`
+
+	EndpointRef *common.ObjectReference `json:"endpointRef,omitempty"`
 }
 
 type TailnetBehavior struct {

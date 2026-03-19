@@ -18,10 +18,13 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const driftCheckInterval = 10 * time.Minute
+const tailnetDNSConfigEndpointRefIndex = "spec.nameserver.endpointRef.name"
 
 type SplitDNSClientFactory func(tailnet, apiToken string) tailnetdns.SplitDNSClient
 
@@ -84,11 +87,22 @@ func (r *TailnetDNSConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 	}
 
+	nameserverAddress, resolveErr := r.resolveNameserverAddress(ctx, &config)
+	if resolveErr != nil {
+		if err = r.updateStatus(ctx, &config, tailscalev1alpha1.TailnetDNSConfigStatus{
+			ObservedGeneration: config.Generation,
+			DriftDetected:      true,
+		}, nil, resolveErr); err != nil {
+			return ctrl.Result{}, err
+		}
+		return result, nil
+	}
+
 	splitDNSResult, ensureErr := tailnetdns.EnsureSplitDNS(
 		ctx,
 		factory(config.Spec.Tailnet, apiToken),
 		config.Spec.Zone,
-		config.Spec.Nameserver.Address,
+		nameserverAddress,
 	)
 	if ensureErr != nil {
 		logger.Error(ensureErr, "unable to ensure split dns")
@@ -117,10 +131,56 @@ func (r *TailnetDNSConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 }
 
 func (r *TailnetDNSConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &tailscalev1alpha1.TailnetDNSConfig{}, tailnetDNSConfigEndpointRefIndex, func(object client.Object) []string {
+		config, ok := object.(*tailscalev1alpha1.TailnetDNSConfig)
+		if !ok || config.Spec.Nameserver.EndpointRef == nil || config.Spec.Nameserver.EndpointRef.Name == "" {
+			return nil
+		}
+		return []string{config.Spec.Nameserver.EndpointRef.Name}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&tailscalev1alpha1.TailnetDNSConfig{}).
+		Watches(&tailscalev1alpha1.TailnetDNSEndpoint{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
+			endpoint, ok := object.(*tailscalev1alpha1.TailnetDNSEndpoint)
+			if !ok {
+				return nil
+			}
+			var configs tailscalev1alpha1.TailnetDNSConfigList
+			if err := r.List(ctx, &configs, client.InNamespace(endpoint.Namespace), client.MatchingFields{tailnetDNSConfigEndpointRefIndex: endpoint.Name}); err != nil {
+				return nil
+			}
+			requests := make([]reconcile.Request, 0, len(configs.Items))
+			for _, config := range configs.Items {
+				requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&config)})
+			}
+			return requests
+		})).
 		Named("tailscale-tailnetdnsconfig").
 		Complete(r)
+}
+
+func (r *TailnetDNSConfigReconciler) resolveNameserverAddress(ctx context.Context, config *tailscalev1alpha1.TailnetDNSConfig) (string, error) {
+	if config.Spec.Nameserver.Address != "" {
+		return config.Spec.Nameserver.Address, nil
+	}
+	if config.Spec.Nameserver.EndpointRef == nil {
+		return "", fmt.Errorf("nameserver must define either address or endpointRef")
+	}
+
+	endpointNamespace, err := namespaceForObjectRef(config.Namespace, config.Spec.Nameserver.EndpointRef.Namespace, "endpoint")
+	if err != nil {
+		return "", err
+	}
+
+	var endpoint tailscalev1alpha1.TailnetDNSEndpoint
+	if err := r.Get(ctx, client.ObjectKey{Namespace: endpointNamespace, Name: config.Spec.Nameserver.EndpointRef.Name}, &endpoint); err != nil {
+		return "", fmt.Errorf("get referenced tailnet dns endpoint: %w", err)
+	}
+
+	return tailnetdns.ResolveNameserverAddress(config, &endpoint)
 }
 
 func (r *TailnetDNSConfigReconciler) readSecretValue(ctx context.Context, namespace, name, key string) (string, error) {

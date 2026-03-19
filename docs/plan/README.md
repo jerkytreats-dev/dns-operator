@@ -64,7 +64,7 @@ The roadmap is intentionally front loaded toward the end-user outcome:
 
 Each phase should produce four things:
 
-- a clear control surface (`CRD`, `API`, or both)
+- a clear control surface such as `CRD` or `API`
 - a runnable reconciliation or automation path
 - status, event, and operational feedback
 - an upgrade, rollback, or repair story
@@ -75,6 +75,7 @@ Each phase should produce four things:
 - Secret material must enter the system through `Secret` references, never raw spec fields.
 - File persistence from the reference app should be treated as migration input only.
 - Runtime config should be rendered into `ConfigMap` or `Secret` resources that CoreDNS and Caddy consume.
+- Authoritative DNS exposure should remain separable from HTTPS runtime exposure and can use tailnet native L3 service exposure.
 - `PublishedService` is the primary user-facing concept for internal publishing.
 - `DNSRecord` remains available as a lower-level authoritative DNS primitive for manual records, migration inputs, and challenge records.
 - Shared SAN certificate membership should be derived from desired published hosts, not managed ad hoc per runtime process.
@@ -82,6 +83,7 @@ Each phase should produce four things:
 - Any optional HTTP compatibility layer should remain outside the core controller design.
 - Argo should install `dns-operator` from deploy artifacts in this repository, while the operator owns generated runtime state.
 - The initial install surface should use `Kustomize` overlays instead of a `Helm` chart.
+- Tailnet native authoritative DNS should use a sibling Tailscale exposed `Service` instead of mutating the primary authoritative DNS service.
 
 ## Observed Reference Reality
 
@@ -99,6 +101,10 @@ The detailed source of truth for planning is in [Current reference state](curren
 The concrete source to target import mapping is in [Current reference migration matrix](current-reference-migration-matrix.md).
 
 The target Argo deployment model is in [Deployment shape](deployment-shape.md).
+
+The operator managed tailnet authority proposal is in [Tailnet DNS endpoint design](tailnet-dns-endpoint.md).
+
+The concrete delivery shape for that feature is in [Tailnet DNS endpoint implementation plan](tailnet-dns-endpoint-implementation.md).
 
 ## Success Criteria
 

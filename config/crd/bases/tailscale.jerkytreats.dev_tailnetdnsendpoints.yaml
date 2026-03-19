@@ -4,24 +4,27 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: tailnetdnsconfigs.tailscale.jerkytreats.dev
+  name: tailnetdnsendpoints.tailscale.jerkytreats.dev
 spec:
   group: tailscale.jerkytreats.dev
   names:
-    kind: TailnetDNSConfig
-    listKind: TailnetDNSConfigList
-    plural: tailnetdnsconfigs
+    kind: TailnetDNSEndpoint
+    listKind: TailnetDNSEndpointList
+    plural: tailnetdnsendpoints
     shortNames:
-    - tdc
-    singular: tailnetdnsconfig
+    - tde
+    singular: tailnetdnsendpoint
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.zone
       name: Zone
       type: string
-    - jsonPath: .status.conditions[?(@.type=="SplitDNSReady")].status
-      name: SplitDNSReady
+    - jsonPath: .status.endpointAddress
+      name: EndpointAddress
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="EndpointReady")].status
+      name: EndpointReady
       type: string
     name: v1alpha1
     schema:
@@ -63,21 +66,22 @@ spec:
                 required:
                 - secretRef
                 type: object
-              behavior:
+              exposure:
                 properties:
-                  mode:
-                    enum:
-                    - bootstrapAndRepair
-                    type: string
-                required:
-                - mode
-                type: object
-              nameserver:
-                properties:
-                  address:
+                  hostname:
                     minLength: 1
                     type: string
-                  endpointRef:
+                  mode:
+                    enum:
+                    - tailscaleVIPService
+                    type: string
+                required:
+                - hostname
+                - mode
+                type: object
+              service:
+                properties:
+                  ref:
                     properties:
                       name:
                         type: string
@@ -86,11 +90,9 @@ spec:
                     required:
                     - name
                     type: object
+                required:
+                - ref
                 type: object
-                x-kubernetes-validations:
-                - message: exactly one of address or endpointRef must be set
-                  rule: (has(self.address) && size(self.address) > 0 && !has(self.endpointRef))
-                    || (!has(self.address) && has(self.endpointRef))
               tailnet:
                 minLength: 1
                 type: string
@@ -99,8 +101,8 @@ spec:
                 type: string
             required:
             - auth
-            - behavior
-            - nameserver
+            - exposure
+            - service
             - tailnet
             - zone
             type: object
@@ -165,16 +167,36 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              configuredNameserver:
+              endpointAddress:
                 type: string
-              driftDetected:
-                type: boolean
+              endpointDNSName:
+                type: string
+              endpointHostname:
+                type: string
+              exposureServiceRef:
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                required:
+                - name
+                type: object
               lastAppliedAt:
                 format: date-time
                 type: string
               observedGeneration:
                 format: int64
                 type: integer
+              resolvedServiceRef:
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                required:
+                - name
+                type: object
             type: object
         required:
         - spec

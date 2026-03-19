@@ -1,20 +1,21 @@
 apiVersion: tailscale.jerkytreats.dev/v1alpha1
-kind: TailnetDNSConfig
+kind: TailnetDNSEndpoint
 metadata:
   labels:
     app.kubernetes.io/name: dns-operator
     app.kubernetes.io/managed-by: kustomize
-  name: internal-zone
+  name: internal-authority
   namespace: dns-operator-system
 spec:
   zone: internal.example.test
   tailnet: example.ts.net
-  nameserver:
-    endpointRef:
-      name: internal-authority
+  service:
+    ref:
+      name: dns-operator-authoritative-dns
   auth:
     secretRef:
       name: tailscale-admin-credentials
       key: api-key
-  behavior:
-    mode: bootstrapAndRepair
+  exposure:
+    mode: tailscaleVIPService
+    hostname: internal-authority

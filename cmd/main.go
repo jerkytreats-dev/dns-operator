@@ -237,6 +237,14 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "TailnetDNSConfig")
 		os.Exit(1)
 	}
+	if err := (&tailscalecontroller.TailnetDNSEndpointReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("tailscale-tailnetdnsendpoint"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TailnetDNSEndpoint")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	cacheReadiness := observability.NewCacheSyncReadiness(mgr.GetCache().WaitForCacheSync)

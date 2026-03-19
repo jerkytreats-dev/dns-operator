@@ -9,6 +9,7 @@ const (
 	ConditionCertificateReady   = "CertificateReady"
 	ConditionRuntimeReady       = "RuntimeReady"
 	ConditionSplitDNSReady      = "SplitDNSReady"
+	ConditionEndpointReady      = "EndpointReady"
 	ConditionAccepted           = "Accepted"
 )
 

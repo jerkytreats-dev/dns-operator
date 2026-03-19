@@ -231,6 +231,113 @@ func TestTailnetDNSConfigReconcileRejectsCrossNamespaceSecretRef(t *testing.T) {
 	}
 }
 
+func TestTailnetDNSConfigReconcileResolvesEndpointRef(t *testing.T) {
+	t.Parallel()
+
+	scheme := newTailnetScheme(t)
+	config := &tailscalev1alpha1.TailnetDNSConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "internal-zone", Namespace: "dns-operator-system", Generation: 1},
+		Spec: tailscalev1alpha1.TailnetDNSConfigSpec{
+			Zone:    "internal.example.test",
+			Tailnet: "example.ts.net",
+			Nameserver: tailscalev1alpha1.TailnetNameserver{
+				EndpointRef: &common.ObjectReference{Name: "internal-authority"},
+			},
+			Auth: tailscalev1alpha1.TailnetDNSAuth{
+				SecretRef: common.SecretKeyReference{Name: "tailscale-admin", Key: "api-key"},
+			},
+			Behavior: tailscalev1alpha1.TailnetBehavior{Mode: tailscalev1alpha1.TailnetDNSBehaviorBootstrapAndRepair},
+		},
+	}
+	endpoint := &tailscalev1alpha1.TailnetDNSEndpoint{
+		ObjectMeta: metav1.ObjectMeta{Name: "internal-authority", Namespace: "dns-operator-system"},
+		Status: tailscalev1alpha1.TailnetDNSEndpointStatus{
+			EndpointAddress: "100.100.100.100",
+			Conditions:      []metav1.Condition{{Type: common.ConditionReady, Status: metav1.ConditionTrue}},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "tailscale-admin", Namespace: "dns-operator-system"},
+		Data:       map[string][]byte{"api-key": []byte("tskey-api-123")},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&tailscalev1alpha1.TailnetDNSConfig{}).
+		WithObjects(config, endpoint, secret).
+		Build()
+
+	reconciler := &TailnetDNSConfigReconciler{
+		Client: client,
+		Scheme: scheme,
+		ClientFactory: func(string, string) tailnetdns.SplitDNSClient {
+			return &fakeSplitDNSClient{getResult: map[string][]string{}, patchResult: map[string][]string{"internal.example.test": {"100.100.100.100"}}}
+		},
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "internal-zone", Namespace: "dns-operator-system"}}); err != nil {
+		t.Fatalf("reconcile returned error: %v", err)
+	}
+
+	var updated tailscalev1alpha1.TailnetDNSConfig
+	if err := client.Get(context.Background(), types.NamespacedName{Name: "internal-zone", Namespace: "dns-operator-system"}, &updated); err != nil {
+		t.Fatalf("get updated object: %v", err)
+	}
+	if updated.Status.ConfiguredNameserver != "100.100.100.100" {
+		t.Fatalf("unexpected configured nameserver: %s", updated.Status.ConfiguredNameserver)
+	}
+}
+
+func TestTailnetDNSConfigReconcileRejectsUnreadyEndpointRef(t *testing.T) {
+	t.Parallel()
+
+	scheme := newTailnetScheme(t)
+	config := &tailscalev1alpha1.TailnetDNSConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "internal-zone", Namespace: "dns-operator-system", Generation: 1},
+		Spec: tailscalev1alpha1.TailnetDNSConfigSpec{
+			Zone:    "internal.example.test",
+			Tailnet: "example.ts.net",
+			Nameserver: tailscalev1alpha1.TailnetNameserver{
+				EndpointRef: &common.ObjectReference{Name: "internal-authority"},
+			},
+			Auth: tailscalev1alpha1.TailnetDNSAuth{
+				SecretRef: common.SecretKeyReference{Name: "tailscale-admin", Key: "api-key"},
+			},
+			Behavior: tailscalev1alpha1.TailnetBehavior{Mode: tailscalev1alpha1.TailnetDNSBehaviorBootstrapAndRepair},
+		},
+	}
+	endpoint := &tailscalev1alpha1.TailnetDNSEndpoint{
+		ObjectMeta: metav1.ObjectMeta{Name: "internal-authority", Namespace: "dns-operator-system"},
+		Status:     tailscalev1alpha1.TailnetDNSEndpointStatus{},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "tailscale-admin", Namespace: "dns-operator-system"},
+		Data:       map[string][]byte{"api-key": []byte("tskey-api-123")},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&tailscalev1alpha1.TailnetDNSConfig{}).
+		WithObjects(config, endpoint, secret).
+		Build()
+
+	reconciler := &TailnetDNSConfigReconciler{Client: client, Scheme: scheme}
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "internal-zone", Namespace: "dns-operator-system"}}); err != nil {
+		t.Fatalf("reconcile returned error: %v", err)
+	}
+
+	var updated tailscalev1alpha1.TailnetDNSConfig
+	if err := client.Get(context.Background(), types.NamespacedName{Name: "internal-zone", Namespace: "dns-operator-system"}, &updated); err != nil {
+		t.Fatalf("get updated object: %v", err)
+	}
+	if updated.Status.ConfiguredNameserver != "" {
+		t.Fatalf("expected no configured nameserver, got %s", updated.Status.ConfiguredNameserver)
+	}
+	if !updated.Status.DriftDetected {
+		t.Fatal("expected drift to remain detected when endpoint is not ready")
+	}
+}
+
 type failingSplitDNSClient struct{}
 
 func (failingSplitDNSClient) GetSplitDNS(context.Context) (map[string][]string, error) {

@@ -3,5 +3,6 @@ resources:
 - dns_v1alpha1_dnsrecord.yaml
 - publish_v1alpha1_publishedservice.yaml
 - certificate_v1alpha1_certificatebundle.yaml
+- tailscale_v1alpha1_tailnetdnsendpoint.yaml
 - tailscale_v1alpha1_tailnetdnsconfig.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
