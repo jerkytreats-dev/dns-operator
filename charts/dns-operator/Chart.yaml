@@ -3,4 +3,4 @@ name: dns-operator
 description: Helm chart for dns-operator install and bootstrap resources
 type: application
 version: 0.1.0
-appVersion: latest
+appVersion: "v0.1.0"
