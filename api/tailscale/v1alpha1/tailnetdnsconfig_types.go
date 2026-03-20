@@ -43,7 +43,7 @@ type TailnetBehavior struct {
 }
 
 type TailnetDNSConfigSpec struct {
-	// +kubebuilder:validation:Pattern=`^internal\.example\.test$`
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Zone string `json:"zone"`
 
 	// +kubebuilder:validation:MinLength=1
