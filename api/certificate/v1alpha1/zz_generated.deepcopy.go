@@ -194,6 +194,10 @@ func (in *CertificateBundleStatus) DeepCopyInto(out *CertificateBundleStatus) {
 		in, out := &in.LastIssuedAt, &out.LastIssuedAt
 		*out = (*in).DeepCopy()
 	}
+	if in.NextAttemptAt != nil {
+		in, out := &in.NextAttemptAt, &out.NextAttemptAt
+		*out = (*in).DeepCopy()
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))
