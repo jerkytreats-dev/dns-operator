@@ -115,11 +115,10 @@ func Import(input ImportInput) (ImportResult, error) {
 		CaseCollisions:       map[string][]string{},
 	}
 
-	cfg, cfgWarnings, err := parseConfig(input.ConfigYAML)
+	cfg, err := parseConfig(input.ConfigYAML)
 	if err != nil {
 		return ImportResult{}, err
 	}
-	report.Warnings = append(report.Warnings, cfgWarnings...)
 
 	managedZone := strings.ToLower(strings.TrimSuffix(cfg.Tailscale.DNS.Zone, "."))
 	if managedZone == "" {
@@ -149,11 +148,10 @@ func Import(input ImportInput) (ImportResult, error) {
 	report.SkippedDisabledProxyRules = disabledRules
 	mergeCaseCollisions(report.CaseCollisions, proxyCollisions)
 
-	certDomains, certWarnings, certCollisions, err := parseCertificateDomains(input.CertificateDomainsJSON)
+	certDomains, certCollisions, err := parseCertificateDomains(input.CertificateDomainsJSON)
 	if err != nil {
 		return ImportResult{}, err
 	}
-	report.Warnings = append(report.Warnings, certWarnings...)
 	mergeCaseCollisions(report.CaseCollisions, certCollisions)
 
 	objects := make([]any, 0)
@@ -212,15 +210,15 @@ func RenderReport(report ImportReport) ([]byte, error) {
 	return json.MarshalIndent(report, "", "  ")
 }
 
-func parseConfig(data []byte) (legacyConfig, []string, error) {
+func parseConfig(data []byte) (legacyConfig, error) {
 	var cfg legacyConfig
 	if len(bytes.TrimSpace(data)) == 0 {
-		return cfg, nil, nil
+		return cfg, nil
 	}
 	if err := yamlv3.Unmarshal(data, &cfg); err != nil {
-		return cfg, nil, fmt.Errorf("parse config.yaml: %w", err)
+		return cfg, fmt.Errorf("parse config.yaml: %w", err)
 	}
-	return cfg, nil, nil
+	return cfg, nil
 }
 
 func parseProxyRules(data []byte) ([]legacyProxyRule, []string, map[string][]string, error) {
@@ -263,13 +261,13 @@ func parseProxyRules(data []byte) ([]legacyProxyRule, []string, map[string][]str
 	return rules, disabled, collisions, nil
 }
 
-func parseCertificateDomains(data []byte) (legacyCertificateDomains, []string, map[string][]string, error) {
+func parseCertificateDomains(data []byte) (legacyCertificateDomains, map[string][]string, error) {
 	var domains legacyCertificateDomains
 	if len(bytes.TrimSpace(data)) == 0 {
-		return domains, nil, nil, nil
+		return domains, nil, nil
 	}
 	if err := json.Unmarshal(data, &domains); err != nil {
-		return domains, nil, nil, fmt.Errorf("parse certificate_domains.json: %w", err)
+		return domains, nil, fmt.Errorf("parse certificate_domains.json: %w", err)
 	}
 
 	collisions := map[string][]string{}
@@ -290,7 +288,7 @@ func parseCertificateDomains(data []byte) (legacyCertificateDomains, []string, m
 	sort.Strings(normalized)
 	domains.BaseDomain = canonicalHostname(domains.BaseDomain)
 	domains.SANDomains = normalized
-	return domains, nil, collisions, nil
+	return domains, collisions, nil
 }
 
 func parseZoneFile(data []byte) ([]importedRecord, string, []string, map[string][]string, error) {

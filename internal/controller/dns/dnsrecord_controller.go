@@ -74,10 +74,10 @@ func (r *DNSRecordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	publishRuntimeTarget, publishRuntimeTargetErr := r.resolvePublishRuntimeTarget(ctx, req.Namespace)
 
 	for i := range records.Items {
-		record := records.Items[i]
-		projectedRecord, err := dnsdomain.RecordForDNSRecord(r.zonePolicy(), record)
+		dnsRecord := records.Items[i]
+		projectedRecord, err := dnsdomain.RecordForDNSRecord(r.zonePolicy(), dnsRecord)
 		if err != nil {
-			recordErrors[client.ObjectKeyFromObject(&record)] = err
+			recordErrors[client.ObjectKeyFromObject(&dnsRecord)] = err
 			continue
 		}
 		projected = append(projected, projectedRecord)
@@ -104,9 +104,9 @@ func (r *DNSRecordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	for i := range records.Items {
-		record := records.Items[i]
-		key := client.ObjectKeyFromObject(&record)
-		if err := r.updateDNSRecordStatus(ctx, &record, rendered, recordErrors[key], configMapErr); err != nil {
+		dnsRecord := records.Items[i]
+		key := client.ObjectKeyFromObject(&dnsRecord)
+		if err := r.updateDNSRecordStatus(ctx, &dnsRecord, rendered, recordErrors[key], configMapErr); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -278,43 +278,43 @@ func (r *DNSRecordReconciler) reconcileZoneConfigMap(ctx context.Context, namesp
 
 func (r *DNSRecordReconciler) updateDNSRecordStatus(
 	ctx context.Context,
-	record *dnsv1alpha1.DNSRecord,
+	dnsRecord *dnsv1alpha1.DNSRecord,
 	rendered dnsdomain.RenderedZone,
 	projectionErr error,
 	configMapErr error,
 ) error {
-	base := record.DeepCopy()
-	record.Status.ObservedGeneration = record.Generation
-	record.Status.ZoneConfigMapName = rendered.ConfigMapName
-	record.Status.RenderedValues = append([]string(nil), record.Spec.Values...)
-	record.Status.Conditions = resetConditions(record.Status.Conditions)
+	base := dnsRecord.DeepCopy()
+	dnsRecord.Status.ObservedGeneration = dnsRecord.Generation
+	dnsRecord.Status.ZoneConfigMapName = rendered.ConfigMapName
+	dnsRecord.Status.RenderedValues = append([]string(nil), dnsRecord.Spec.Values...)
+	dnsRecord.Status.Conditions = resetConditions(dnsRecord.Status.Conditions)
 
 	if projectionErr != nil {
-		setFalseCondition(&record.Status.Conditions, common.ConditionInputValid, "ValidationFailed", projectionErr.Error(), record.Generation)
-		setFalseCondition(&record.Status.Conditions, common.ConditionAccepted, "Rejected", projectionErr.Error(), record.Generation)
-		setFalseCondition(&record.Status.Conditions, common.ConditionReady, "ProjectionFailed", projectionErr.Error(), record.Generation)
+		setFalseCondition(&dnsRecord.Status.Conditions, common.ConditionInputValid, "ValidationFailed", projectionErr.Error(), dnsRecord.Generation)
+		setFalseCondition(&dnsRecord.Status.Conditions, common.ConditionAccepted, "Rejected", projectionErr.Error(), dnsRecord.Generation)
+		setFalseCondition(&dnsRecord.Status.Conditions, common.ConditionReady, "ProjectionFailed", projectionErr.Error(), dnsRecord.Generation)
 	} else if configMapErr != nil {
-		setTrueCondition(&record.Status.Conditions, common.ConditionInputValid, "Validated", "record accepted for rendering", record.Generation)
-		setTrueCondition(&record.Status.Conditions, common.ConditionAccepted, "Accepted", "record accepted for rendering", record.Generation)
-		setFalseCondition(&record.Status.Conditions, common.ConditionReady, "ConfigMapUpdateFailed", configMapErr.Error(), record.Generation)
+		setTrueCondition(&dnsRecord.Status.Conditions, common.ConditionInputValid, "Validated", "record accepted for rendering", dnsRecord.Generation)
+		setTrueCondition(&dnsRecord.Status.Conditions, common.ConditionAccepted, "Accepted", "record accepted for rendering", dnsRecord.Generation)
+		setFalseCondition(&dnsRecord.Status.Conditions, common.ConditionReady, "ConfigMapUpdateFailed", configMapErr.Error(), dnsRecord.Generation)
 	} else {
-		setTrueCondition(&record.Status.Conditions, common.ConditionInputValid, "Validated", "record accepted for rendering", record.Generation)
-		setTrueCondition(&record.Status.Conditions, common.ConditionAccepted, "Accepted", "record accepted for rendering", record.Generation)
-		setTrueCondition(&record.Status.Conditions, common.ConditionReady, "Rendered", "record rendered into authoritative zone output", record.Generation)
+		setTrueCondition(&dnsRecord.Status.Conditions, common.ConditionInputValid, "Validated", "record accepted for rendering", dnsRecord.Generation)
+		setTrueCondition(&dnsRecord.Status.Conditions, common.ConditionAccepted, "Accepted", "record accepted for rendering", dnsRecord.Generation)
+		setTrueCondition(&dnsRecord.Status.Conditions, common.ConditionReady, "Rendered", "record rendered into authoritative zone output", dnsRecord.Generation)
 	}
 
-	if equalDNSRecordStatus(base.Status, record.Status) {
+	if equalDNSRecordStatus(base.Status, dnsRecord.Status) {
 		return nil
 	}
 
-	if err := r.Status().Patch(ctx, record, client.MergeFrom(base)); err != nil {
+	if err := r.Status().Patch(ctx, dnsRecord, client.MergeFrom(base)); err != nil {
 		return err
 	}
 	observability.EmitConditionTransitions(
 		r.Recorder,
-		record,
+		dnsRecord,
 		base.Status.Conditions,
-		record.Status.Conditions,
+		dnsRecord.Status.Conditions,
 		common.ConditionInputValid,
 		common.ConditionAccepted,
 		common.ConditionReady,

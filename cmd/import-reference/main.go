@@ -10,16 +10,36 @@ import (
 
 func main() {
 	var (
-		namespace              = flag.String("namespace", migration.DefaultNamespace, "Namespace for imported resources")
-		bundleName             = flag.String("bundle-name", migration.DefaultBundleName, "Name for the imported shared CertificateBundle")
-		nameserverAddress      = flag.String("nameserver-address", "", "Current restricted nameserver address from Tailscale admin state")
+		namespace = flag.String(
+			"namespace",
+			migration.DefaultNamespace,
+			"Namespace for imported resources",
+		)
+		bundleName = flag.String(
+			"bundle-name",
+			migration.DefaultBundleName,
+			"Name for the imported shared CertificateBundle",
+		)
+		nameserverAddress = flag.String(
+			"nameserver-address",
+			"",
+			"Current restricted nameserver address from Tailscale admin state",
+		)
 		configPath             = flag.String("config", "", "Path to exported config.yaml")
 		zoneFilePath           = flag.String("zone-file", "", "Path to exported authoritative zone file")
 		proxyRulesPath         = flag.String("proxy-rules", "", "Path to exported proxy_rules.json")
-		certificateDomainsPath = flag.String("certificate-domains", "", "Path to exported certificate_domains.json")
-		caddyfilePath          = flag.String("caddyfile", "", "Optional path to exported rendered Caddyfile")
-		outputPath             = flag.String("output", "", "Path to write imported resources YAML (defaults to stdout)")
-		reportPath             = flag.String("report", "", "Optional path to write the import report JSON")
+		certificateDomainsPath = flag.String(
+			"certificate-domains",
+			"",
+			"Path to exported certificate_domains.json",
+		)
+		caddyfilePath = flag.String("caddyfile", "", "Optional path to exported rendered Caddyfile")
+		outputPath    = flag.String(
+			"output",
+			"",
+			"Path to write imported resources YAML, defaults to stdout",
+		)
+		reportPath = flag.String("report", "", "Optional path to write the import report JSON")
 	)
 	flag.Parse()
 

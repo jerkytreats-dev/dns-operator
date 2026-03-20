@@ -51,7 +51,7 @@ func ObserveReconcile(controller string, started time.Time, result ctrl.Result, 
 	outcome := OutcomeSuccess
 	if err != nil {
 		outcome = OutcomeError
-	} else if result.Requeue || result.RequeueAfter > 0 {
+	} else if result.RequeueAfter > 0 {
 		outcome = OutcomeRequeue
 	}
 

@@ -6,6 +6,7 @@ resources:
 - bases/publish.jerkytreats.dev_publishedservices.yaml
 - bases/certificate.jerkytreats.dev_certificatebundles.yaml
 - bases/tailscale.jerkytreats.dev_tailnetdnsconfigs.yaml
+- bases/tailscale.jerkytreats.dev_tailnetdnsendpoints.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

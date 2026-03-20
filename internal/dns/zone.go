@@ -191,20 +191,20 @@ func validateRecordValue(recordType, value string) error {
 	case dnsv1alpha1.DNSRecordTypeA:
 		ip := net.ParseIP(value)
 		if ip == nil || ip.To4() == nil {
-			return fmt.Errorf("A records require an IPv4 value")
+			return fmt.Errorf("a records require an IPv4 value")
 		}
 	case dnsv1alpha1.DNSRecordTypeAAAA:
 		ip := net.ParseIP(value)
 		if ip == nil || ip.To4() != nil {
-			return fmt.Errorf("AAAA records require an IPv6 value")
+			return fmt.Errorf("aaaa records require an IPv6 value")
 		}
 	case dnsv1alpha1.DNSRecordTypeCNAME:
 		if err := validation.ValidateFQDN(value); err != nil {
-			return fmt.Errorf("CNAME records require a valid target: %w", err)
+			return fmt.Errorf("cname records require a valid target: %w", err)
 		}
 	case dnsv1alpha1.DNSRecordTypeTXT:
 		if value == "" {
-			return fmt.Errorf("TXT records require a value")
+			return fmt.Errorf("txt records require a value")
 		}
 	default:
 		return fmt.Errorf("unsupported record type %q", recordType)

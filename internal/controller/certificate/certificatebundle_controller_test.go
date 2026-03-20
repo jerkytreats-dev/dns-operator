@@ -368,10 +368,7 @@ func (f fakeBundleIssuer) EnsureCertificate(_ context.Context, request certdomai
 	if err != nil {
 		return certdomain.EnsureResult{}, err
 	}
-	accountSecret, err := certdomainTestAccountSecret(request.Bundle.Namespace, certdomain.AccountSecretName(request.Bundle.Name))
-	if err != nil {
-		return certdomain.EnsureResult{}, err
-	}
+	accountSecret := certdomainTestAccountSecret(request.Bundle.Namespace, certdomain.AccountSecretName(request.Bundle.Name))
 	return certdomain.EnsureResult{
 		TLSSecret:     secret,
 		AccountSecret: accountSecret,
@@ -384,7 +381,7 @@ func (f fakeErrorBundleIssuer) EnsureCertificate(_ context.Context, _ certdomain
 	return certdomain.EnsureResult{}, f.err
 }
 
-func certdomainTestAccountSecret(namespace, name string) (*corev1.Secret, error) {
+func certdomainTestAccountSecret(namespace, name string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 		Type:       corev1.SecretTypeOpaque,
@@ -392,5 +389,5 @@ func certdomainTestAccountSecret(namespace, name string) (*corev1.Secret, error)
 			"registration.json": []byte("{}"),
 			"private.key":       []byte("key"),
 		},
-	}, nil
+	}
 }

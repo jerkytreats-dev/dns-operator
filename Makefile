@@ -102,6 +102,16 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+.PHONY: check-commit
+check-commit: manifests generate fmt vet lint test ## Run the required pre-commit checks.
+
+.PHONY: check-ci
+check-ci: check-commit test-e2e ## Run the full local CI suite.
+
+.PHONY: enable-git-hooks
+enable-git-hooks: ## Configure the repo to use the committed Git hooks.
+	git config core.hooksPath .githooks
+
 ##@ Build
 
 .PHONY: build

@@ -204,7 +204,9 @@ func (c *cloudflareAPI) deleteTXTRecord(ctx context.Context, zoneID, recordID st
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	if response.StatusCode >= 300 {
 		body, _ := io.ReadAll(response.Body)
 		return fmt.Errorf("cloudflare delete failed with status %s: %s", response.Status, strings.TrimSpace(string(body)))
@@ -223,7 +225,9 @@ func (c *cloudflareAPI) get(ctx context.Context, url string) (cloudflareZonesRes
 	if err != nil {
 		return cloudflareZonesResponse{}, err
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 
 	var payload cloudflareZonesResponse
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
@@ -251,7 +255,9 @@ func (c *cloudflareAPI) post(ctx context.Context, url string, payload cloudflare
 	if err != nil {
 		return cloudflareRecordResponse{}, err
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 
 	var recordResponse cloudflareRecordResponse
 	if err := json.NewDecoder(response.Body).Decode(&recordResponse); err != nil {
@@ -263,12 +269,12 @@ func (c *cloudflareAPI) post(ctx context.Context, url string, payload cloudflare
 	return recordResponse, nil
 }
 
-func cloudflareErrors(errors []cloudflareAPIError) string {
-	if len(errors) == 0 {
+func cloudflareErrors(apiErrors []cloudflareAPIError) string {
+	if len(apiErrors) == 0 {
 		return "cloudflare api request failed"
 	}
-	messages := make([]string, 0, len(errors))
-	for _, err := range errors {
+	messages := make([]string, 0, len(apiErrors))
+	for _, err := range apiErrors {
 		if err.Message != "" {
 			messages = append(messages, err.Message)
 		}

@@ -110,8 +110,8 @@ func (r *TailnetDNSEndpointReconciler) Reconcile(ctx context.Context, req ctrl.R
 	key := client.ObjectKeyFromObject(desiredService)
 	exposureService := corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: desiredService.Name, Namespace: desiredService.Namespace}}
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, &exposureService, func() error {
-		exposureService.ObjectMeta.Name = desiredService.Name
-		exposureService.ObjectMeta.Namespace = desiredService.Namespace
+		exposureService.Name = desiredService.Name
+		exposureService.Namespace = desiredService.Namespace
 		if exposureService.Labels == nil {
 			exposureService.Labels = map[string]string{}
 		}

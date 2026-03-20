@@ -87,7 +87,9 @@ func (c *HTTPClient) do(req *http.Request) (map[string][]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("perform request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("tailscale API returned status %d", resp.StatusCode)

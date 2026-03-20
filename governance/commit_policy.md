@@ -52,3 +52,15 @@ Examples:
 ## Push Guard
 
 Verify with the user before push.
+
+## Required Checks
+
+- Before every commit, run `make check-commit`.
+- A commit is not ready until `make check-commit` exits with success.
+- If your change touches controllers, CRDs, manifests, install paths, or release automation, also run `make test-e2e` before you ask for final ship approval.
+
+## Clean Branch Rule
+
+- Do not treat red checks as out of scope.
+- If `Lint`, `Tests`, or `E2E Tests` is red on the branch you are extending, fix the branch before you stack unrelated work on top.
+- Do not commit on top of a knowingly broken branch and defer cleanup to later.
