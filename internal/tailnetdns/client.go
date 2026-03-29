@@ -77,7 +77,7 @@ func (c *HTTPClient) newRequest(ctx context.Context, method string, body *bytes.
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	req.SetBasicAuth(c.apiToken, "")
+	req.Header.Set("Authorization", "Bearer "+c.apiToken)
 	req.Header.Set("Accept", "application/json")
 	return req, nil
 }
