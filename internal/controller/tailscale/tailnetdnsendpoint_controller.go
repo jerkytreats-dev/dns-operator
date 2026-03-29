@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -64,39 +65,23 @@ func (r *TailnetDNSEndpointReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, nil
 	}
 
-	secretNamespace, secretErr := namespaceForSecretRef(endpoint.Namespace, endpoint.Spec.Auth.SecretRef.Namespace)
-	if secretErr != nil {
-		if err = r.updateStatus(ctx, &endpoint, status, nil, secretErr, nil, nil); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
-	}
-	if _, err = r.readSecretValue(ctx, secretNamespace, endpoint.Spec.Auth.SecretRef.Name, endpoint.Spec.Auth.SecretRef.Key); err != nil {
+	if err = r.ensureCredentialsAvailable(ctx, &endpoint); err != nil {
 		if updateErr := r.updateStatus(ctx, &endpoint, status, nil, err, nil, nil); updateErr != nil {
 			return ctrl.Result{}, updateErr
 		}
 		return ctrl.Result{}, nil
 	}
 
-	targetNamespace, refErr := namespaceForObjectRef(endpoint.Namespace, endpoint.Spec.Service.Ref.Namespace, "service")
+	targetService, refErr := r.resolveTargetService(ctx, &endpoint)
 	if refErr != nil {
 		if err = r.updateStatus(ctx, &endpoint, status, nil, nil, refErr, nil); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
-
-	var targetService corev1.Service
-	if err = r.Get(ctx, client.ObjectKey{Namespace: targetNamespace, Name: endpoint.Spec.Service.Ref.Name}, &targetService); err != nil {
-		refErr = fmt.Errorf("get target service: %w", err)
-		if updateErr := r.updateStatus(ctx, &endpoint, status, nil, nil, refErr, nil); updateErr != nil {
-			return ctrl.Result{}, updateErr
-		}
-		return ctrl.Result{}, nil
-	}
 	status.ResolvedServiceRef = &common.ObjectReference{Name: targetService.Name, Namespace: targetService.Namespace}
 
-	desiredService, buildErr := tailnetdns.BuildExposureService(&endpoint, &targetService)
+	desiredService, buildErr := tailnetdns.BuildExposureService(&endpoint, targetService)
 	if buildErr != nil {
 		if err = r.updateStatus(ctx, &endpoint, status, nil, nil, buildErr, nil); err != nil {
 			return ctrl.Result{}, err
@@ -141,7 +126,11 @@ func (r *TailnetDNSEndpointReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 	status.ExposureServiceRef = &common.ObjectReference{Name: exposureService.Name, Namespace: exposureService.Namespace}
-	observed := tailnetdns.ObserveExposureService(&exposureService)
+	proxySecret, proxySecretErr := r.findExposureSecret(ctx, &exposureService)
+	if proxySecretErr != nil {
+		return ctrl.Result{}, proxySecretErr
+	}
+	observed := tailnetdns.ObserveExposureService(&exposureService, proxySecret)
 	status.EndpointHostname = observed.EndpointHostname
 	status.EndpointDNSName = observed.EndpointDNSName
 	status.EndpointAddress = observed.EndpointAddress
@@ -162,7 +151,32 @@ func (r *TailnetDNSEndpointReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 	logger.V(1).Info("reconciled tailnet dns endpoint", "name", endpoint.Name, "namespace", endpoint.Namespace, "exposureService", exposureService.Name)
+	if !observed.Ready {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
 	return ctrl.Result{}, nil
+}
+
+func (r *TailnetDNSEndpointReconciler) ensureCredentialsAvailable(ctx context.Context, endpoint *tailscalev1alpha1.TailnetDNSEndpoint) error {
+	secretNamespace, err := namespaceForSecretRef(endpoint.Namespace, endpoint.Spec.Auth.SecretRef.Namespace)
+	if err != nil {
+		return err
+	}
+	_, err = r.readSecretValue(ctx, secretNamespace, endpoint.Spec.Auth.SecretRef.Name, endpoint.Spec.Auth.SecretRef.Key)
+	return err
+}
+
+func (r *TailnetDNSEndpointReconciler) resolveTargetService(ctx context.Context, endpoint *tailscalev1alpha1.TailnetDNSEndpoint) (*corev1.Service, error) {
+	targetNamespace, err := namespaceForObjectRef(endpoint.Namespace, endpoint.Spec.Service.Ref.Namespace, "service")
+	if err != nil {
+		return nil, err
+	}
+
+	var targetService corev1.Service
+	if err := r.Get(ctx, client.ObjectKey{Namespace: targetNamespace, Name: endpoint.Spec.Service.Ref.Name}, &targetService); err != nil {
+		return nil, fmt.Errorf("get target service: %w", err)
+	}
+	return &targetService, nil
 }
 
 func (r *TailnetDNSEndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -194,6 +208,42 @@ func (r *TailnetDNSEndpointReconciler) SetupWithManager(mgr ctrl.Manager) error 
 			}
 			return requests
 		})).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
+			secret, ok := object.(*corev1.Secret)
+			if !ok {
+				return nil
+			}
+
+			var endpoints tailscalev1alpha1.TailnetDNSEndpointList
+			if err := r.List(ctx, &endpoints); err != nil {
+				return nil
+			}
+
+			requests := make([]reconcile.Request, 0, len(endpoints.Items))
+			for _, endpoint := range endpoints.Items {
+				authSecretNamespace, err := namespaceForSecretRef(endpoint.Namespace, endpoint.Spec.Auth.SecretRef.Namespace)
+				if err == nil && secret.Namespace == authSecretNamespace && secret.Name == endpoint.Spec.Auth.SecretRef.Name {
+					requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: endpoint.Name, Namespace: endpoint.Namespace}})
+					continue
+				}
+
+				if secret.Labels[tailnetdns.TailscaleManagedLabel] != "true" {
+					continue
+				}
+				if secret.Labels[tailnetdns.TailscaleParentTypeLabel] != "svc" {
+					continue
+				}
+				if secret.Labels[tailnetdns.TailscaleParentNSLabel] != endpoint.Namespace {
+					continue
+				}
+				if secret.Labels[tailnetdns.TailscaleParentNameLabel] != tailnetdns.ExposureServiceName(endpoint.Name) {
+					continue
+				}
+				requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: endpoint.Name, Namespace: endpoint.Namespace}})
+			}
+
+			return requests
+		})).
 		Named("tailscale-tailnetdnsendpoint").
 		Complete(r)
 }
@@ -208,6 +258,28 @@ func (r *TailnetDNSEndpointReconciler) readSecretValue(ctx context.Context, name
 		return "", fmt.Errorf("secret %s/%s missing key %q", namespace, name, key)
 	}
 	return string(value), nil
+}
+
+func (r *TailnetDNSEndpointReconciler) findExposureSecret(ctx context.Context, exposureService *corev1.Service) (*corev1.Secret, error) {
+	if exposureService == nil {
+		return nil, nil
+	}
+
+	selector := labels.SelectorFromSet(map[string]string{
+		tailnetdns.TailscaleManagedLabel:    "true",
+		tailnetdns.TailscaleParentTypeLabel: "svc",
+		tailnetdns.TailscaleParentNSLabel:   exposureService.Namespace,
+		tailnetdns.TailscaleParentNameLabel: exposureService.Name,
+	})
+
+	var secrets corev1.SecretList
+	if err := r.List(ctx, &secrets, &client.ListOptions{LabelSelector: selector}); err != nil {
+		return nil, fmt.Errorf("list exposure secrets: %w", err)
+	}
+	if len(secrets.Items) == 0 {
+		return nil, nil
+	}
+	return &secrets.Items[0], nil
 }
 
 func validateTailnetDNSEndpoint(endpoint *tailscalev1alpha1.TailnetDNSEndpoint) error {

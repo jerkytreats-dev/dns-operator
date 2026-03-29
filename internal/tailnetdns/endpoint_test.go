@@ -10,13 +10,15 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+const testEndpointHostname = "internal-authority"
+
 func TestBuildExposureServiceMirrorsDNSPortsAndSelector(t *testing.T) {
 	t.Parallel()
 
 	endpoint := &tailscalev1alpha1.TailnetDNSEndpoint{
 		ObjectMeta: metav1.ObjectMeta{Name: "internal-authority", Namespace: "dns-operator-system"},
 		Spec: tailscalev1alpha1.TailnetDNSEndpointSpec{
-			Exposure: tailscalev1alpha1.TailnetDNSEndpointExposure{Hostname: "internal-authority"},
+			Exposure: tailscalev1alpha1.TailnetDNSEndpointExposure{Hostname: testEndpointHostname},
 		},
 	}
 	target := &corev1.Service{
@@ -48,7 +50,7 @@ func TestBuildExposureServiceMirrorsDNSPortsAndSelector(t *testing.T) {
 	if rendered.Annotations[TailscaleExposeAnnotation] != "true" {
 		t.Fatalf("expected Tailscale expose annotation, got %#v", rendered.Annotations)
 	}
-	if rendered.Annotations[TailscaleHostnameAnnotation] != "internal-authority" {
+	if rendered.Annotations[TailscaleHostnameAnnotation] != testEndpointHostname {
 		t.Fatalf("unexpected hostname annotation: %s", rendered.Annotations[TailscaleHostnameAnnotation])
 	}
 	if len(rendered.Spec.Ports) != 2 {
@@ -87,7 +89,7 @@ func TestObserveExposureServiceReadsVIPStatus(t *testing.T) {
 			Name:      "internal-authority-tailscale",
 			Namespace: "dns-operator-system",
 			Annotations: map[string]string{
-				TailscaleHostnameAnnotation: "internal-authority",
+				TailscaleHostnameAnnotation: testEndpointHostname,
 			},
 		},
 		Status: corev1.ServiceStatus{
@@ -97,7 +99,7 @@ func TestObserveExposureServiceReadsVIPStatus(t *testing.T) {
 		},
 	}
 
-	status := ObserveExposureService(service)
+	status := ObserveExposureService(service, nil)
 	if !status.Ready {
 		t.Fatal("expected exposure status to be ready")
 	}
@@ -107,7 +109,41 @@ func TestObserveExposureServiceReadsVIPStatus(t *testing.T) {
 	if status.EndpointDNSName != "internal-authority.example.ts.net" {
 		t.Fatalf("unexpected endpoint dns name: %s", status.EndpointDNSName)
 	}
-	if status.EndpointHostname != "internal-authority" {
+	if status.EndpointHostname != testEndpointHostname {
+		t.Fatalf("unexpected endpoint hostname: %s", status.EndpointHostname)
+	}
+}
+
+func TestObserveExposureServiceReadsProxySecretStatus(t *testing.T) {
+	t.Parallel()
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "internal-authority-tailscale",
+			Namespace: "dns-operator-system",
+			Annotations: map[string]string{
+				TailscaleHostnameAnnotation: testEndpointHostname,
+			},
+		},
+	}
+	proxySecret := &corev1.Secret{
+		Data: map[string][]byte{
+			"device_fqdn": []byte("internal-authority.example.ts.net."),
+			"device_ips":  []byte(`["fd7a:115c:a1e0::1","100.114.159.106"]`),
+		},
+	}
+
+	status := ObserveExposureService(service, proxySecret)
+	if !status.Ready {
+		t.Fatal("expected exposure status to be ready")
+	}
+	if status.EndpointAddress != "100.114.159.106" {
+		t.Fatalf("unexpected endpoint address: %s", status.EndpointAddress)
+	}
+	if status.EndpointDNSName != "internal-authority.example.ts.net" {
+		t.Fatalf("unexpected endpoint dns name: %s", status.EndpointDNSName)
+	}
+	if status.EndpointHostname != testEndpointHostname {
 		t.Fatalf("unexpected endpoint hostname: %s", status.EndpointHostname)
 	}
 }

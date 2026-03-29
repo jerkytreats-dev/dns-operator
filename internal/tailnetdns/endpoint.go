@@ -1,7 +1,10 @@
 package tailnetdns
 
 import (
+	"encoding/json"
 	"fmt"
+	"net"
+	"strings"
 
 	"github.com/jerkytreats/dns-operator/api/common"
 	tailscalev1alpha1 "github.com/jerkytreats/dns-operator/api/tailscale/v1alpha1"
@@ -14,6 +17,10 @@ import (
 const (
 	TailscaleExposeAnnotation   = "tailscale.com/expose"
 	TailscaleHostnameAnnotation = "tailscale.com/hostname"
+	TailscaleManagedLabel       = "tailscale.com/managed"
+	TailscaleParentNameLabel    = "tailscale.com/parent-resource"
+	TailscaleParentNSLabel      = "tailscale.com/parent-resource-ns"
+	TailscaleParentTypeLabel    = "tailscale.com/parent-resource-type"
 
 	EndpointComponentLabel = "tailnet-dns-endpoint"
 )
@@ -75,7 +82,7 @@ func BuildExposureService(endpoint *tailscalev1alpha1.TailnetDNSEndpoint, target
 	}, nil
 }
 
-func ObserveExposureService(service *corev1.Service) ExposureStatus {
+func ObserveExposureService(service *corev1.Service, proxySecret *corev1.Secret) ExposureStatus {
 	if service == nil {
 		return ExposureStatus{}
 	}
@@ -93,8 +100,43 @@ func ObserveExposureService(service *corev1.Service) ExposureStatus {
 		}
 	}
 
+	if proxySecret != nil {
+		if status.EndpointDNSName == "" {
+			status.EndpointDNSName = strings.TrimSuffix(string(proxySecret.Data["device_fqdn"]), ".")
+		}
+		if status.EndpointAddress == "" {
+			status.EndpointAddress = firstIPv4(proxySecret.Data["device_ips"])
+		}
+	}
+
 	status.Ready = status.EndpointAddress != ""
 	return status
+}
+
+func firstIPv4(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return ""
+	}
+
+	for _, value := range values {
+		ip := net.ParseIP(value)
+		if ip == nil {
+			continue
+		}
+		if ipv4 := ip.To4(); ipv4 != nil {
+			return ipv4.String()
+		}
+	}
+
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }
 
 func ResolveNameserverAddress(config *tailscalev1alpha1.TailnetDNSConfig, endpoint *tailscalev1alpha1.TailnetDNSEndpoint) (string, error) {
