@@ -67,6 +67,8 @@ spec:
         - name: caddy
           image: {{ printf "%s:%s" .Values.runtime.caddy.image.repository .Values.runtime.caddy.image.tag }}
           imagePullPolicy: {{ .Values.runtime.caddy.image.pullPolicy }}
+          command:
+            - caddy
           args:
             - run
             - --config
