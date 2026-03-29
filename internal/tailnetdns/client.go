@@ -31,7 +31,7 @@ type HTTPClient struct {
 func NewHTTPClient(tailnet, apiToken string) *HTTPClient {
 	return &HTTPClient{
 		tailnet:  tailnet,
-		apiToken: apiToken,
+		apiToken: strings.TrimSpace(apiToken),
 		baseURL:  DefaultAPIBaseURL,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,

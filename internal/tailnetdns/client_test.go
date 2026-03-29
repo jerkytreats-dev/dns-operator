@@ -10,12 +10,12 @@ import (
 func TestHTTPClientUsesBearerAuthorization(t *testing.T) {
 	t.Parallel()
 
-	const token = "tskey-api-example"
+	const token = "tskey-api-example\n"
 	const nameserver = "100.100.100.100"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
-			t.Fatalf("authorization header = %q, want %q", got, "Bearer "+token)
+		if got := r.Header.Get("Authorization"); got != "Bearer tskey-api-example" {
+			t.Fatalf("authorization header = %q, want %q", got, "Bearer tskey-api-example")
 		}
 		if got := r.Header.Get("Accept"); got != "application/json" {
 			t.Fatalf("accept header = %q, want application/json", got)
