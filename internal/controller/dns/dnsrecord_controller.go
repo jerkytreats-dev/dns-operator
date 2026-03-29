@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -175,6 +176,31 @@ func (r *DNSRecordReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}),
 			builder.WithPredicates(publishedServiceChanged),
 		).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
+				secret, ok := obj.(*corev1.Secret)
+				if !ok {
+					return nil
+				}
+				if secret.Labels[publishdomain.TailscaleManagedLabel] != "true" {
+					return nil
+				}
+				if secret.Labels[publishdomain.TailscaleParentTypeLabel] != "svc" {
+					return nil
+				}
+				if secret.Labels[publishdomain.TailscaleParentNameLabel] != publishdomain.RuntimeServiceName {
+					return nil
+				}
+				return []reconcile.Request{{
+					NamespacedName: types.NamespacedName{
+						Namespace: secret.Labels[publishdomain.TailscaleParentNSLabel],
+						Name:      dnsdomain.ZoneSyncRequestName,
+					},
+				}}
+			}),
+			builder.WithPredicates(publishedServiceChanged),
+		).
 		Named("dns-dnsrecord").
 		Complete(r)
 }
@@ -201,18 +227,34 @@ func (r *DNSRecordReconciler) resolvePublishRuntimeTarget(ctx context.Context, n
 	if err := r.Get(ctx, types.NamespacedName{Name: publishdomain.RuntimeServiceName, Namespace: namespace}, &runtimeService); err != nil {
 		return "", fmt.Errorf("get publish runtime service: %w", err)
 	}
-	for _, ingress := range runtimeService.Status.LoadBalancer.Ingress {
-		if ingress.IP != "" {
-			return ingress.IP, nil
-		}
-		if ingress.Hostname != "" {
-			return ingress.Hostname, nil
-		}
+
+	proxySecret, err := r.findPublishRuntimeProxySecret(ctx, namespace)
+	if err != nil {
+		return "", err
 	}
-	if runtimeService.Spec.ClusterIP != "" && runtimeService.Spec.ClusterIP != corev1.ClusterIPNone {
-		return runtimeService.Spec.ClusterIP, nil
+
+	if target := publishdomain.ResolveRuntimeTarget(&runtimeService, proxySecret); target != "" {
+		return target, nil
 	}
 	return "", fmt.Errorf("publish runtime service does not have an address yet")
+}
+
+func (r *DNSRecordReconciler) findPublishRuntimeProxySecret(ctx context.Context, namespace string) (*corev1.Secret, error) {
+	selector := labels.SelectorFromSet(map[string]string{
+		publishdomain.TailscaleManagedLabel:    "true",
+		publishdomain.TailscaleParentTypeLabel: "svc",
+		publishdomain.TailscaleParentNSLabel:   namespace,
+		publishdomain.TailscaleParentNameLabel: publishdomain.RuntimeServiceName,
+	})
+
+	var secrets corev1.SecretList
+	if err := r.List(ctx, &secrets, &client.ListOptions{LabelSelector: selector}); err != nil {
+		return nil, fmt.Errorf("list publish runtime proxy secrets: %w", err)
+	}
+	if len(secrets.Items) == 0 {
+		return nil, nil
+	}
+	return &secrets.Items[0], nil
 }
 
 func (r *DNSRecordReconciler) reconcileZoneConfigMap(ctx context.Context, namespace string, rendered dnsdomain.RenderedZone) (string, error) {

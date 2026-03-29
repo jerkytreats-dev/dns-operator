@@ -9,6 +9,7 @@ import (
 	dnsv1alpha1 "github.com/jerkytreats/dns-operator/api/dns/v1alpha1"
 	publishv1alpha1 "github.com/jerkytreats/dns-operator/api/publish/v1alpha1"
 	dnsdomain "github.com/jerkytreats/dns-operator/internal/dns"
+	publishdomain "github.com/jerkytreats/dns-operator/internal/publish"
 	"github.com/jerkytreats/dns-operator/internal/validation"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -210,6 +211,85 @@ func TestReconcileMarksExternalPublishedServiceAsNotAuthoritative(t *testing.T) 
 	}
 	if got := conditionStatus(updatedService.Status.Conditions, common.ConditionDNSReady); got != metav1.ConditionTrue {
 		t.Fatalf("expected DNSReady true for non-authoritative external host, got %#v", updatedService.Status.Conditions)
+	}
+}
+
+func TestReconcileProjectsPublishedServiceToTailscaleRuntimeAddress(t *testing.T) {
+	t.Parallel()
+
+	scheme := newScheme(t)
+	service := &publishv1alpha1.PublishedService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "api",
+			Namespace:  "dns-operator-system",
+			Generation: 1,
+		},
+		Spec: publishv1alpha1.PublishedServiceSpec{
+			Hostname:    "api.internal.example.test",
+			PublishMode: publishv1alpha1.PublishModeHTTPSProxy,
+			Backend: &publishv1alpha1.PublishBackend{
+				Address: "192.0.2.20",
+				Port:    8080,
+			},
+			TLS: &publishv1alpha1.PublishTLS{Mode: publishv1alpha1.TLSModeSharedSAN},
+		},
+	}
+	runtimeService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "dns-operator-caddy",
+			Namespace: "dns-operator-system",
+			Annotations: map[string]string{
+				"tailscale.com/expose": "true",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "10.43.0.200",
+		},
+	}
+	proxySecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ts-dns-operator-caddy-0",
+			Namespace: "tailscale",
+			Labels: map[string]string{
+				publishdomain.TailscaleManagedLabel:    "true",
+				publishdomain.TailscaleParentTypeLabel: "svc",
+				publishdomain.TailscaleParentNSLabel:   "dns-operator-system",
+				publishdomain.TailscaleParentNameLabel: "dns-operator-caddy",
+			},
+		},
+		Data: map[string][]byte{
+			"device_ips": []byte(`["100.120.77.22"]`),
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&publishv1alpha1.PublishedService{}).
+		WithObjects(service, runtimeService, proxySecret).
+		Build()
+
+	reconciler := &DNSRecordReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: dnsdomain.ZoneSyncRequestName, Namespace: service.Namespace},
+	}); err != nil {
+		t.Fatalf("reconcile returned error: %v", err)
+	}
+
+	var configMap corev1.ConfigMap
+	if err := client.Get(context.Background(), types.NamespacedName{
+		Name:      dnsdomain.ZoneConfigMapName("internal.example.test"),
+		Namespace: service.Namespace,
+	}, &configMap); err != nil {
+		t.Fatalf("get configmap: %v", err)
+	}
+
+	content := configMap.Data[dnsdomain.ZoneConfigMapKey("internal.example.test")]
+	if want := "api 300 IN A 100.120.77.22"; !strings.Contains(content, want) {
+		t.Fatalf("expected projected service content %q in zone:\n%s", want, content)
 	}
 }
 
