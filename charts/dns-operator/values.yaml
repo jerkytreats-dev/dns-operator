@@ -2,7 +2,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/jerkytreats/dns-operator
+  repository: ghcr.io/jerkytreats-dev/dns-operator
   tag: latest
   pullPolicy: IfNotPresent
 

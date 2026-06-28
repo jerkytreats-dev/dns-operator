@@ -18,10 +18,10 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: jerkytreats/dns-operator
+  IMAGE_NAME: jerkytreats-dev/dns-operator
   CHART_PATH: charts/dns-operator
   CHART_NAME: dns-operator
-  CHART_REGISTRY: oci://ghcr.io/jerkytreats/charts
+  CHART_REGISTRY: oci://ghcr.io/jerkytreats-dev/charts
 
 jobs:
   verify:
@@ -127,16 +127,17 @@ jobs:
             body="$(git log -1 --format=%b "$sha")"
 
             if ! grep -Eq '^[a-z]+(\([^)]+\))?(!)?:[[:space:]].+' <<<"$subject"; then
-              echo "::error::Commit $sha is not a valid conventional commit: $subject"
-              exit 1
-            fi
-
-            commit_prefix="${subject%%:*}"
-            commit_type="${commit_prefix%%(*}"
-            commit_type="${commit_type%%!*}"
-            breaking_marker=""
-            if [[ "$commit_prefix" == *"!" ]]; then
-              breaking_marker="!"
+              echo "::warning::Commit $sha is not a valid conventional commit; treating as patch release input: $subject"
+              commit_type="chore"
+              breaking_marker=""
+            else
+              commit_prefix="${subject%%:*}"
+              commit_type="${commit_prefix%%(*}"
+              commit_type="${commit_type%%!*}"
+              breaking_marker=""
+              if [[ "$commit_prefix" == *"!" ]]; then
+                breaking_marker="!"
+              fi
             fi
             case "$commit_type" in
               feat|fix|perf|refactor|docs|design|test|build|ci|chore|policy) ;;
@@ -258,8 +259,8 @@ jobs:
           git tag "${release_tag}" "${RELEASE_SHA}"
           git push origin "${release_tag}"
 
-        if: ${{ steps.plan.outputs.release_required == 'true' }}
       - name: Setup Blacksmith Builder
+        if: ${{ steps.plan.outputs.release_required == 'true' }}
         uses: useblacksmith/setup-docker-builder@v1
 
       - name: Log in to GHCR

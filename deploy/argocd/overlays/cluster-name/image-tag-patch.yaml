@@ -8,4 +8,4 @@ spec:
     spec:
       containers:
         - name: manager
-          image: ghcr.io/jerkytreats/dns-operator:latest
+          image: ghcr.io/jerkytreats-dev/dns-operator:latest

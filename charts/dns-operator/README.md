@@ -38,7 +38,7 @@ A generic tailnet bootstrap example lives in `charts/dns-operator/values-tailnet
 
 ## OCI Publish Target
 
-The intended OCI location is `oci://ghcr.io/jerkytreats/charts/dns-operator`.
+The intended OCI location is `oci://ghcr.io/jerkytreats-dev/charts/dns-operator`.
 
 The release workflow packages the chart, sets the chart version from the git tag, and pushes it to GHCR.
 

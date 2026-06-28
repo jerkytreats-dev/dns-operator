@@ -28,7 +28,7 @@ jobs:
           lines = text.splitlines()
           for idx, line in enumerate(lines):
               if "image:" in line:
-                  lines[idx] = f"          image: ghcr.io/jerkytreats/dns-operator:{tag}"
+                  lines[idx] = f"          image: ghcr.io/jerkytreats-dev/dns-operator:{tag}"
                   break
           else:
               raise SystemExit("image line not found in overlay patch")
