@@ -108,6 +108,12 @@ func TestBuildRuntimeRendersStableCaddyfile(t *testing.T) {
 	if !strings.Contains(rendered.Content, "transport http {\n\t\t\t\ttls_insecure_skip_verify") {
 		t.Fatalf("expected insecure upstream transport block:\n%s", rendered.Content)
 	}
+	if strings.Count(rendered.Content, "stream_close_delay 5m") != 2 {
+		t.Fatalf("expected every reverse proxy block to delay stream close on reload:\n%s", rendered.Content)
+	}
+	if strings.Contains(rendered.Content, "header_up X-Forwarded-For") {
+		t.Fatalf("expected rendered config to rely on Caddy's default X-Forwarded-For handling:\n%s", rendered.Content)
+	}
 	if strings.Count(rendered.Content, "tls /etc/dns-operator/certs/internal-example-test-shared-tls.crt /etc/dns-operator/certs/internal-example-test-shared-tls.key") != 2 {
 		t.Fatalf("expected both host blocks to reference the shared cert files:\n%s", rendered.Content)
 	}

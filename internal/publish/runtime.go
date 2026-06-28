@@ -249,9 +249,9 @@ func renderCaddyfile(sites []runtimeSite) string {
 		builder.WriteString(" {\n")
 		builder.WriteString("\troute /* {\n")
 		builder.WriteString(fmt.Sprintf("\t\treverse_proxy %s://%s:%d {\n", site.BackendProtocol, site.BackendAddress, site.BackendPort))
+		builder.WriteString("\t\t\tstream_close_delay 5m\n")
 		builder.WriteString("\t\t\theader_up Host {host}\n")
 		builder.WriteString("\t\t\theader_up X-Real-IP {remote_host}\n")
-		builder.WriteString("\t\t\theader_up X-Forwarded-For {remote_host}\n")
 		builder.WriteString("\t\t\theader_up X-Forwarded-Proto https\n")
 		if site.BackendProtocol == "https" && site.InsecureSkipVerify {
 			builder.WriteString("\t\t\ttransport http {\n")

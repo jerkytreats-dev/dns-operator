@@ -37,7 +37,6 @@ spec:
             - /etc/caddy/Caddyfile
             - --adapter
             - caddyfile
-            - --watch
           ports:
             - name: http
               containerPort: 80
