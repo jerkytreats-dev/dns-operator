@@ -32,6 +32,12 @@ Sample resources live in:
 
 The operator creates and owns a sibling Tailscale exposed `Service` for the endpoint and publishes the allocated VIP into endpoint status.
 
+## Large WebSocket Payloads
+
+The Caddy runtime proxies WebSocket upgrades as streaming connections. The base deployment gives Caddy a `1Gi` memory limit so large messages have more headroom than the minimum control-plane footprint.
+
+For payloads larger than tens of megabytes or for several concurrent large WebSocket sends, patch the Caddy runtime resources in the cluster overlay and check any upstream application or load balancer message-size limits.
+
 ## Fixed Secret Names
 
 The first cluster overlay assumes stable secret names that are created outside this repository:

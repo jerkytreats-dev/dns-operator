@@ -16,11 +16,30 @@ Keep real domain, tailnet, service type, image tag, and secret names in an infra
 - `operator.publishZones`
 - `runtime.coredns.service.type`
 - `runtime.caddy.service.type`
+- `runtime.caddy.resources`
 - `secrets.tailscaleAdmin.name`
 - `secrets.tailscaleAdmin.key`
 - `secrets.cloudflare.name`
 - `secrets.cloudflare.key`
 - `tailnet.name`
+
+## Large WebSocket Payloads
+
+The Caddy runtime proxies WebSocket upgrades as streaming connections. The generated Caddyfile does not impose a WebSocket message-size limit, so large payload failures are usually caused by Caddy pod memory headroom, the upstream application, or a load balancer in front of the runtime.
+
+The chart defaults give the Caddy runtime a `1Gi` memory limit. For larger payloads or multiple concurrent large WebSocket sends, override `runtime.caddy.resources` in your environment values file:
+
+```yaml
+runtime:
+  caddy:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 2Gi
+```
 
 ## Optional Bootstrap
 
