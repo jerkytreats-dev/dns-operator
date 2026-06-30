@@ -26,7 +26,7 @@ func TestTailnetDNSEndpointReconcileCreatesExposureService(t *testing.T) {
 			Zone:    "internal.example.test",
 			Tailnet: "example.ts.net",
 			Service: tailscalev1alpha1.TailnetDNSEndpointService{Ref: common.ObjectReference{Name: "dns-operator-authoritative-dns"}},
-			Auth:    tailscalev1alpha1.TailnetDNSEndpointAuth{SecretRef: common.SecretKeyReference{Name: "tailscale-admin", Key: "api-key"}},
+			Auth:    tailscalev1alpha1.TailnetDNSEndpointAuth{SecretRef: &common.SecretKeyReference{Name: "tailscale-admin", Key: "api-key"}},
 			Exposure: tailscalev1alpha1.TailnetDNSEndpointExposure{
 				Mode:     tailscalev1alpha1.TailnetDNSEndpointExposureModeVIPService,
 				Hostname: "internal-authority",
@@ -84,6 +84,141 @@ func TestTailnetDNSEndpointReconcileCreatesExposureService(t *testing.T) {
 	}
 }
 
+func TestTailnetDNSEndpointReconcileAcceptsOAuthCredentials(t *testing.T) {
+	t.Parallel()
+
+	scheme := newTailnetScheme(t)
+	endpoint := &tailscalev1alpha1.TailnetDNSEndpoint{
+		ObjectMeta: metav1.ObjectMeta{Name: "internal-authority", Namespace: "dns-operator-system", Generation: 1},
+		Spec: tailscalev1alpha1.TailnetDNSEndpointSpec{
+			Zone:    "internal.example.test",
+			Tailnet: "example.ts.net",
+			Service: tailscalev1alpha1.TailnetDNSEndpointService{Ref: common.ObjectReference{Name: "dns-operator-authoritative-dns"}},
+			Auth: tailscalev1alpha1.TailnetDNSEndpointAuth{
+				OAuthClientCredentials: &tailscalev1alpha1.TailnetOAuthClientCredentials{
+					ClientIDSecretRef:     common.SecretKeyReference{Name: "tailscale-oauth", Key: "client_id"},
+					ClientSecretSecretRef: common.SecretKeyReference{Name: "tailscale-oauth", Key: "client_secret"},
+				},
+			},
+			Exposure: tailscalev1alpha1.TailnetDNSEndpointExposure{
+				Mode:     tailscalev1alpha1.TailnetDNSEndpointExposureModeVIPService,
+				Hostname: "internal-authority",
+			},
+		},
+	}
+	targetService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "dns-operator-authoritative-dns", Namespace: "dns-operator-system"},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "10.43.0.10",
+			Selector:  map[string]string{"app": "coredns"},
+			Ports: []corev1.ServicePort{
+				{Name: "dns-tcp", Port: 53, Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromString("dns-tcp")},
+				{Name: "dns-udp", Port: 53, Protocol: corev1.ProtocolUDP, TargetPort: intstr.FromString("dns-udp")},
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "tailscale-oauth", Namespace: "dns-operator-system"},
+		Data: map[string][]byte{
+			"client_id":     []byte("oauth-client-id"),
+			"client_secret": []byte("oauth-client-secret"),
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&tailscalev1alpha1.TailnetDNSEndpoint{}).
+		WithObjects(endpoint, targetService, secret).
+		Build()
+
+	reconciler := &TailnetDNSEndpointReconciler{Client: client, Scheme: scheme}
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: endpoint.Name, Namespace: endpoint.Namespace}}); err != nil {
+		t.Fatalf("reconcile returned error: %v", err)
+	}
+
+	var updated tailscalev1alpha1.TailnetDNSEndpoint
+	if err := client.Get(context.Background(), types.NamespacedName{Name: endpoint.Name, Namespace: endpoint.Namespace}, &updated); err != nil {
+		t.Fatalf("get updated endpoint: %v", err)
+	}
+	if got := conditionStatus(updated.Status.Conditions, common.ConditionCredentialsReady); got != metav1.ConditionTrue {
+		t.Fatalf("CredentialsReady = %s, want True", got)
+	}
+}
+
+func TestTailnetDNSEndpointReconcileRejectsInvalidOAuthCredentials(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]tailscalev1alpha1.TailnetDNSEndpointAuth{
+		"empty": {},
+		"mixed": {
+			SecretRef: &common.SecretKeyReference{Name: "tailscale-admin", Key: "api-key"},
+			OAuthClientCredentials: &tailscalev1alpha1.TailnetOAuthClientCredentials{
+				ClientIDSecretRef:     common.SecretKeyReference{Name: "tailscale-oauth", Key: "client_id"},
+				ClientSecretSecretRef: common.SecretKeyReference{Name: "tailscale-oauth", Key: "client_secret"},
+			},
+		},
+		"missing secret key": {
+			OAuthClientCredentials: &tailscalev1alpha1.TailnetOAuthClientCredentials{
+				ClientIDSecretRef:     common.SecretKeyReference{Name: "tailscale-oauth", Key: "client_id"},
+				ClientSecretSecretRef: common.SecretKeyReference{Name: "tailscale-oauth", Key: "missing"},
+			},
+		},
+		"cross namespace": {
+			OAuthClientCredentials: &tailscalev1alpha1.TailnetOAuthClientCredentials{
+				ClientIDSecretRef:     common.SecretKeyReference{Name: "tailscale-oauth", Namespace: "shared-secrets", Key: "client_id"},
+				ClientSecretSecretRef: common.SecretKeyReference{Name: "tailscale-oauth", Key: "client_secret"},
+			},
+		},
+	}
+
+	for name, auth := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := newTailnetScheme(t)
+			endpoint := &tailscalev1alpha1.TailnetDNSEndpoint{
+				ObjectMeta: metav1.ObjectMeta{Name: "internal-authority", Namespace: "dns-operator-system", Generation: 1},
+				Spec: tailscalev1alpha1.TailnetDNSEndpointSpec{
+					Zone:    "internal.example.test",
+					Tailnet: "example.ts.net",
+					Service: tailscalev1alpha1.TailnetDNSEndpointService{Ref: common.ObjectReference{Name: "dns-operator-authoritative-dns"}},
+					Auth:    auth,
+					Exposure: tailscalev1alpha1.TailnetDNSEndpointExposure{
+						Mode:     tailscalev1alpha1.TailnetDNSEndpointExposureModeVIPService,
+						Hostname: "internal-authority",
+					},
+				},
+			}
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "tailscale-oauth", Namespace: "dns-operator-system"},
+				Data: map[string][]byte{
+					"client_id":     []byte("oauth-client-id"),
+					"client_secret": []byte("oauth-client-secret"),
+				},
+			}
+
+			client := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithStatusSubresource(&tailscalev1alpha1.TailnetDNSEndpoint{}).
+				WithObjects(endpoint, secret).
+				Build()
+
+			reconciler := &TailnetDNSEndpointReconciler{Client: client, Scheme: scheme}
+			if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: endpoint.Name, Namespace: endpoint.Namespace}}); err != nil {
+				t.Fatalf("reconcile returned error: %v", err)
+			}
+
+			var updated tailscalev1alpha1.TailnetDNSEndpoint
+			if err := client.Get(context.Background(), types.NamespacedName{Name: endpoint.Name, Namespace: endpoint.Namespace}, &updated); err != nil {
+				t.Fatalf("get updated endpoint: %v", err)
+			}
+			if got := conditionStatus(updated.Status.Conditions, common.ConditionCredentialsReady); got != metav1.ConditionFalse {
+				t.Fatalf("CredentialsReady = %s, want False", got)
+			}
+		})
+	}
+}
+
 func TestTailnetDNSEndpointReconcileReportsReadyEndpoint(t *testing.T) {
 	t.Parallel()
 
@@ -94,7 +229,7 @@ func TestTailnetDNSEndpointReconcileReportsReadyEndpoint(t *testing.T) {
 			Zone:    "internal.example.test",
 			Tailnet: "example.ts.net",
 			Service: tailscalev1alpha1.TailnetDNSEndpointService{Ref: common.ObjectReference{Name: "dns-operator-authoritative-dns"}},
-			Auth:    tailscalev1alpha1.TailnetDNSEndpointAuth{SecretRef: common.SecretKeyReference{Name: "tailscale-admin", Key: "api-key"}},
+			Auth:    tailscalev1alpha1.TailnetDNSEndpointAuth{SecretRef: &common.SecretKeyReference{Name: "tailscale-admin", Key: "api-key"}},
 			Exposure: tailscalev1alpha1.TailnetDNSEndpointExposure{
 				Mode:     tailscalev1alpha1.TailnetDNSEndpointExposureModeVIPService,
 				Hostname: "internal-authority",
@@ -170,7 +305,7 @@ func TestTailnetDNSEndpointReconcileReadsReadyEndpointFromProxySecret(t *testing
 			Zone:    "internal.example.test",
 			Tailnet: "example.ts.net",
 			Service: tailscalev1alpha1.TailnetDNSEndpointService{Ref: common.ObjectReference{Name: "dns-operator-authoritative-dns"}},
-			Auth:    tailscalev1alpha1.TailnetDNSEndpointAuth{SecretRef: common.SecretKeyReference{Name: "tailscale-admin", Key: "api-key"}},
+			Auth:    tailscalev1alpha1.TailnetDNSEndpointAuth{SecretRef: &common.SecretKeyReference{Name: "tailscale-admin", Key: "api-key"}},
 			Exposure: tailscalev1alpha1.TailnetDNSEndpointExposure{
 				Mode:     tailscalev1alpha1.TailnetDNSEndpointExposureModeVIPService,
 				Hostname: "internal-authority",

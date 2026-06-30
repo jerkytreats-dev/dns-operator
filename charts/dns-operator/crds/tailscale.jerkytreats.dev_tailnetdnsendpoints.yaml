@@ -51,6 +51,45 @@ spec:
             properties:
               auth:
                 properties:
+                  oauthClientCredentials:
+                    properties:
+                      clientIDSecretRef:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      clientSecretSecretRef:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      scopes:
+                        default:
+                        - dns
+                        items:
+                          enum:
+                          - dns
+                          type: string
+                        minItems: 1
+                        type: array
+                    required:
+                    - clientIDSecretRef
+                    - clientSecretSecretRef
+                    type: object
                   secretRef:
                     properties:
                       key:
@@ -63,9 +102,11 @@ spec:
                     - key
                     - name
                     type: object
-                required:
-                - secretRef
                 type: object
+                x-kubernetes-validations:
+                - message: exactly one of secretRef or oauthClientCredentials must
+                    be set
+                  rule: has(self.secretRef) != has(self.oauthClientCredentials)
               exposure:
                 properties:
                   hostname:

@@ -25,8 +25,13 @@ const (
 	TailnetDNSEndpointExposureModeVIPService = "tailscaleVIPService"
 )
 
+// +kubebuilder:validation:XValidation:rule="has(self.secretRef) != has(self.oauthClientCredentials)",message="exactly one of secretRef or oauthClientCredentials must be set"
 type TailnetDNSEndpointAuth struct {
-	SecretRef common.SecretKeyReference `json:"secretRef"`
+	// +optional
+	SecretRef *common.SecretKeyReference `json:"secretRef,omitempty"`
+
+	// +optional
+	OAuthClientCredentials *TailnetOAuthClientCredentials `json:"oauthClientCredentials,omitempty"`
 }
 
 type TailnetDNSEndpointService struct {

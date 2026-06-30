@@ -13,8 +13,12 @@ spec:
     endpointRef:
       name: internal-authority
   auth:
-    secretRef:
-      name: tailscale-admin-credentials
-      key: api-key
+    oauthClientCredentials:
+      clientIDSecretRef:
+        name: tailscale-admin-credentials
+        key: client-id
+      clientSecretSecretRef:
+        name: tailscale-admin-credentials
+        key: client-secret
   behavior:
     mode: bootstrapAndRepair

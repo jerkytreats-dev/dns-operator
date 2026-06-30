@@ -17,8 +17,12 @@ Keep real domain, tailnet, service type, image tag, and secret names in an infra
 - `runtime.coredns.service.type`
 - `runtime.caddy.service.type`
 - `runtime.caddy.resources`
+- `secrets.tailscaleAdmin.mode`
 - `secrets.tailscaleAdmin.name`
 - `secrets.tailscaleAdmin.key`
+- `secrets.tailscaleAdmin.clientIDKey`
+- `secrets.tailscaleAdmin.clientSecretKey`
+- `secrets.tailscaleAdmin.scopes`
 - `secrets.cloudflare.name`
 - `secrets.cloudflare.key`
 - `tailnet.name`
@@ -50,6 +54,29 @@ The chart can also create:
 - `CertificateBundle`
 
 Enable only the bootstrap resources you want Argo to own.
+
+Tailscale bootstrap auth defaults to the legacy API-token shape:
+
+```yaml
+secrets:
+  tailscaleAdmin:
+    mode: apiToken
+    name: tailscale-admin-credentials
+    key: api-key
+```
+
+Use OAuth client credentials by switching the mode and pointing both keys at the same Kubernetes `Secret`:
+
+```yaml
+secrets:
+  tailscaleAdmin:
+    mode: oauthClientCredentials
+    name: tailscale-admin-credentials
+    clientIDKey: client-id
+    clientSecretKey: client-secret
+    scopes:
+      - dns
+```
 
 ## Example Values
 

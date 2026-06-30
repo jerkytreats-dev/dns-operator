@@ -13,9 +13,7 @@ spec:
     ref:
       name: {{ include "dns-operator.bootstrapEndpointServiceName" . }}
   auth:
-    secretRef:
-      name: {{ .Values.secrets.tailscaleAdmin.name }}
-      key: {{ .Values.secrets.tailscaleAdmin.key }}
+{{ include "dns-operator.tailscaleAuth" . | indent 4 }}
   exposure:
     mode: tailscaleVIPService
     hostname: {{ .Values.bootstrap.tailnetDNSEndpoint.hostname }}
@@ -40,9 +38,7 @@ spec:
     address: {{ .Values.bootstrap.tailnetDNSConfig.address }}
     {{- end }}
   auth:
-    secretRef:
-      name: {{ .Values.secrets.tailscaleAdmin.name }}
-      key: {{ .Values.secrets.tailscaleAdmin.key }}
+{{ include "dns-operator.tailscaleAuth" . | indent 4 }}
   behavior:
     mode: bootstrapAndRepair
 {{- end }}
