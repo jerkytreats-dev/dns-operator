@@ -585,7 +585,7 @@ func buildTailnetDNSConfig(namespace, zone, nameserver string, cfg legacyConfig)
 				Address: nameserver,
 			},
 			Auth: tailscalev1alpha1.TailnetDNSAuth{
-				SecretRef: common.SecretKeyReference{
+				SecretRef: &common.SecretKeyReference{
 					Name: DefaultTailscaleSecretName,
 					Key:  "api-key",
 				},

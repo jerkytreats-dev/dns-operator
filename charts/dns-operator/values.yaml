@@ -79,8 +79,13 @@ runtime:
 
 secrets:
   tailscaleAdmin:
+    mode: apiToken
     name: tailscale-admin-credentials
     key: api-key
+    clientIDKey: client-id
+    clientSecretKey: client-secret
+    scopes:
+      - dns
   cloudflare:
     name: cloudflare-credentials
     key: api-token

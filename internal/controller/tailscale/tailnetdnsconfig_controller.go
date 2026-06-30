@@ -26,7 +26,7 @@ import (
 const driftCheckInterval = 10 * time.Minute
 const tailnetDNSConfigEndpointRefIndex = "spec.nameserver.endpointRef.name"
 
-type SplitDNSClientFactory func(tailnet, apiToken string) tailnetdns.SplitDNSClient
+type SplitDNSClientFactory func(tailnet string, auth tailnetdns.AuthConfig) (tailnetdns.SplitDNSClient, error)
 
 type TailnetDNSConfigReconciler struct {
 	client.Client
@@ -57,18 +57,7 @@ func (r *TailnetDNSConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	secretNamespace, secretNamespaceErr := namespaceForSecretRef(config.Namespace, config.Spec.Auth.SecretRef.Namespace)
-	if secretNamespaceErr != nil {
-		if err = r.updateStatus(ctx, &config, tailscalev1alpha1.TailnetDNSConfigStatus{
-			ObservedGeneration: config.Generation,
-			DriftDetected:      true,
-		}, secretNamespaceErr, nil); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: driftCheckInterval}, nil
-	}
-
-	apiToken, credErr := r.readSecretValue(ctx, secretNamespace, config.Spec.Auth.SecretRef.Name, config.Spec.Auth.SecretRef.Key)
+	authConfig, credErr := resolveTailnetAuth(ctx, r.Client, config.Namespace, dnsConfigAuthRefs(config.Spec.Auth))
 	result = ctrl.Result{RequeueAfter: driftCheckInterval}
 	if credErr != nil {
 		if err = r.updateStatus(ctx, &config, tailscalev1alpha1.TailnetDNSConfigStatus{
@@ -82,8 +71,8 @@ func (r *TailnetDNSConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	factory := r.ClientFactory
 	if factory == nil {
-		factory = func(tailnet, token string) tailnetdns.SplitDNSClient {
-			return tailnetdns.NewHTTPClient(tailnet, token)
+		factory = func(tailnet string, auth tailnetdns.AuthConfig) (tailnetdns.SplitDNSClient, error) {
+			return tailnetdns.NewHTTPClientWithAuth(tailnet, auth)
 		}
 	}
 
@@ -98,9 +87,20 @@ func (r *TailnetDNSConfigReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return result, nil
 	}
 
+	splitDNSClient, clientErr := factory(config.Spec.Tailnet, authConfig)
+	if clientErr != nil {
+		if err = r.updateStatus(ctx, &config, tailscalev1alpha1.TailnetDNSConfigStatus{
+			ObservedGeneration: config.Generation,
+			DriftDetected:      true,
+		}, clientErr, nil); err != nil {
+			return ctrl.Result{}, err
+		}
+		return result, nil
+	}
+
 	splitDNSResult, ensureErr := tailnetdns.EnsureSplitDNS(
 		ctx,
-		factory(config.Spec.Tailnet, apiToken),
+		splitDNSClient,
 		config.Spec.Zone,
 		nameserverAddress,
 	)
@@ -143,6 +143,25 @@ func (r *TailnetDNSConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&tailscalev1alpha1.TailnetDNSConfig{}).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
+			secret, ok := object.(*corev1.Secret)
+			if !ok {
+				return nil
+			}
+
+			var configs tailscalev1alpha1.TailnetDNSConfigList
+			if err := r.List(ctx, &configs); err != nil {
+				return nil
+			}
+
+			requests := make([]reconcile.Request, 0, len(configs.Items))
+			for _, config := range configs.Items {
+				if tailnetAuthReferencesSecret(config.Namespace, dnsConfigAuthRefs(config.Spec.Auth), secret.Namespace, secret.Name) {
+					requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&config)})
+				}
+			}
+			return requests
+		})).
 		Watches(&tailscalev1alpha1.TailnetDNSEndpoint{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
 			endpoint, ok := object.(*tailscalev1alpha1.TailnetDNSEndpoint)
 			if !ok {
@@ -181,18 +200,6 @@ func (r *TailnetDNSConfigReconciler) resolveNameserverAddress(ctx context.Contex
 	}
 
 	return tailnetdns.ResolveNameserverAddress(config, &endpoint)
-}
-
-func (r *TailnetDNSConfigReconciler) readSecretValue(ctx context.Context, namespace, name, key string) (string, error) {
-	var secret corev1.Secret
-	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &secret); err != nil {
-		return "", fmt.Errorf("get credentials secret: %w", err)
-	}
-	value, found := secret.Data[key]
-	if !found || len(value) == 0 {
-		return "", fmt.Errorf("secret %s/%s missing key %q", namespace, name, key)
-	}
-	return string(value), nil
 }
 
 func namespaceForSecretRef(ownerNamespace, refNamespace string) (string, error) {
@@ -313,6 +320,11 @@ func conditionEquals(a, b metav1.Condition) bool {
 func credentialsReason(err error) string {
 	if strings.Contains(err.Error(), "must remain in namespace") {
 		return "CrossNamespaceSecretRefRejected"
+	}
+	if strings.Contains(err.Error(), "exactly one of auth.secretRef") ||
+		strings.Contains(err.Error(), "secretRef name and key are required") ||
+		strings.Contains(err.Error(), "unsupported tailscale oauth scope") {
+		return "InvalidAuth"
 	}
 	return "SecretUnavailable"
 }

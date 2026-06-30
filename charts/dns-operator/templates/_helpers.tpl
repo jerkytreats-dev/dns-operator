@@ -82,3 +82,28 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- include "dns-operator.authoritativeServiceName" . -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "dns-operator.tailscaleAuth" -}}
+{{- $auth := .Values.secrets.tailscaleAdmin -}}
+{{- $mode := default "apiToken" $auth.mode -}}
+{{- $name := required "secrets.tailscaleAdmin.name is required" $auth.name -}}
+{{- if eq $mode "apiToken" -}}
+secretRef:
+  name: {{ $name | quote }}
+  key: {{ required "secrets.tailscaleAdmin.key is required when mode is apiToken" $auth.key | quote }}
+{{- else if eq $mode "oauthClientCredentials" -}}
+oauthClientCredentials:
+  clientIDSecretRef:
+    name: {{ $name | quote }}
+    key: {{ required "secrets.tailscaleAdmin.clientIDKey is required when mode is oauthClientCredentials" $auth.clientIDKey | quote }}
+  clientSecretSecretRef:
+    name: {{ $name | quote }}
+    key: {{ required "secrets.tailscaleAdmin.clientSecretKey is required when mode is oauthClientCredentials" $auth.clientSecretKey | quote }}
+{{- with $auth.scopes }}
+  scopes:
+{{- toYaml . | nindent 4 }}
+{{- end }}
+{{- else }}
+{{- fail "secrets.tailscaleAdmin.mode must be one of apiToken or oauthClientCredentials" }}
+{{- end -}}
+{{- end -}}

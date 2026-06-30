@@ -158,11 +158,7 @@ func (r *TailnetDNSEndpointReconciler) Reconcile(ctx context.Context, req ctrl.R
 }
 
 func (r *TailnetDNSEndpointReconciler) ensureCredentialsAvailable(ctx context.Context, endpoint *tailscalev1alpha1.TailnetDNSEndpoint) error {
-	secretNamespace, err := namespaceForSecretRef(endpoint.Namespace, endpoint.Spec.Auth.SecretRef.Namespace)
-	if err != nil {
-		return err
-	}
-	_, err = r.readSecretValue(ctx, secretNamespace, endpoint.Spec.Auth.SecretRef.Name, endpoint.Spec.Auth.SecretRef.Key)
+	_, err := resolveTailnetAuth(ctx, r.Client, endpoint.Namespace, dnsEndpointAuthRefs(endpoint.Spec.Auth))
 	return err
 }
 
@@ -221,8 +217,7 @@ func (r *TailnetDNSEndpointReconciler) SetupWithManager(mgr ctrl.Manager) error 
 
 			requests := make([]reconcile.Request, 0, len(endpoints.Items))
 			for _, endpoint := range endpoints.Items {
-				authSecretNamespace, err := namespaceForSecretRef(endpoint.Namespace, endpoint.Spec.Auth.SecretRef.Namespace)
-				if err == nil && secret.Namespace == authSecretNamespace && secret.Name == endpoint.Spec.Auth.SecretRef.Name {
+				if tailnetAuthReferencesSecret(endpoint.Namespace, dnsEndpointAuthRefs(endpoint.Spec.Auth), secret.Namespace, secret.Name) {
 					requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: endpoint.Name, Namespace: endpoint.Namespace}})
 					continue
 				}
@@ -246,18 +241,6 @@ func (r *TailnetDNSEndpointReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		})).
 		Named("tailscale-tailnetdnsendpoint").
 		Complete(r)
-}
-
-func (r *TailnetDNSEndpointReconciler) readSecretValue(ctx context.Context, namespace, name, key string) (string, error) {
-	var secret corev1.Secret
-	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &secret); err != nil {
-		return "", fmt.Errorf("get credentials secret: %w", err)
-	}
-	value, found := secret.Data[key]
-	if !found || len(value) == 0 {
-		return "", fmt.Errorf("secret %s/%s missing key %q", namespace, name, key)
-	}
-	return string(value), nil
 }
 
 func (r *TailnetDNSEndpointReconciler) findExposureSecret(ctx context.Context, exposureService *corev1.Service) (*corev1.Secret, error) {
@@ -291,9 +274,6 @@ func validateTailnetDNSEndpoint(endpoint *tailscalev1alpha1.TailnetDNSEndpoint) 
 	}
 	if endpoint.Spec.Service.Ref.Name == "" {
 		return fmt.Errorf("service.ref.name is required")
-	}
-	if endpoint.Spec.Auth.SecretRef.Name == "" || endpoint.Spec.Auth.SecretRef.Key == "" {
-		return fmt.Errorf("auth.secretRef name and key are required")
 	}
 	if endpoint.Spec.Exposure.Mode != tailscalev1alpha1.TailnetDNSEndpointExposureModeVIPService {
 		return fmt.Errorf("unsupported exposure mode %q", endpoint.Spec.Exposure.Mode)

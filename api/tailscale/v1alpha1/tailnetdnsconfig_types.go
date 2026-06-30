@@ -25,8 +25,25 @@ const (
 	TailnetDNSBehaviorBootstrapAndRepair = "bootstrapAndRepair"
 )
 
+// +kubebuilder:validation:XValidation:rule="has(self.secretRef) != has(self.oauthClientCredentials)",message="exactly one of secretRef or oauthClientCredentials must be set"
 type TailnetDNSAuth struct {
-	SecretRef common.SecretKeyReference `json:"secretRef"`
+	// +optional
+	SecretRef *common.SecretKeyReference `json:"secretRef,omitempty"`
+
+	// +optional
+	OAuthClientCredentials *TailnetOAuthClientCredentials `json:"oauthClientCredentials,omitempty"`
+}
+
+type TailnetOAuthClientCredentials struct {
+	ClientIDSecretRef common.SecretKeyReference `json:"clientIDSecretRef"`
+
+	ClientSecretSecretRef common.SecretKeyReference `json:"clientSecretSecretRef"`
+
+	// +optional
+	// +kubebuilder:default:={dns}
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:Enum=dns
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="(has(self.address) && size(self.address) > 0 && !has(self.endpointRef)) || (!has(self.address) && has(self.endpointRef))",message="exactly one of address or endpointRef must be set"

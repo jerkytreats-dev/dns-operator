@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -22,20 +24,40 @@ type SplitDNSClient interface {
 }
 
 type HTTPClient struct {
-	tailnet    string
-	apiToken   string
-	baseURL    string
-	httpClient *http.Client
+	tailnet         string
+	baseURL         string
+	httpClient      *http.Client
+	sensitiveValues func() []string
 }
 
 func NewHTTPClient(tailnet, apiToken string) *HTTPClient {
+	client := NewHTTPClientWithHTTPClient(tailnet, newBearerHTTPClient(apiToken, nil))
+	client.sensitiveValues = AuthConfig{APIToken: apiToken}.sensitiveValues
+	return client
+}
+
+func NewHTTPClientWithAuth(tailnet string, auth AuthConfig) (*HTTPClient, error) {
+	return NewHTTPClientWithAuthContext(context.Background(), tailnet, auth)
+}
+
+func NewHTTPClientWithAuthContext(ctx context.Context, tailnet string, auth AuthConfig) (*HTTPClient, error) {
+	authenticated, err := newAuthenticatedHTTPClientWithContext(ctx, auth)
+	if err != nil {
+		return nil, err
+	}
+	client := NewHTTPClientWithHTTPClient(tailnet, authenticated.client)
+	client.sensitiveValues = authenticated.sensitiveValues
+	return client, nil
+}
+
+func NewHTTPClientWithHTTPClient(tailnet string, httpClient *http.Client) *HTTPClient {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: defaultTimeout}
+	}
 	return &HTTPClient{
-		tailnet:  tailnet,
-		apiToken: strings.TrimSpace(apiToken),
-		baseURL:  DefaultAPIBaseURL,
-		httpClient: &http.Client{
-			Timeout: defaultTimeout,
-		},
+		tailnet:    tailnet,
+		baseURL:    DefaultAPIBaseURL,
+		httpClient: httpClient,
 	}
 }
 
@@ -71,13 +93,16 @@ func (c *HTTPClient) newRequest(ctx context.Context, method string, body *bytes.
 		reader = bytes.NewReader(nil)
 	}
 
-	url := strings.TrimSuffix(c.baseURL, "/") + fmt.Sprintf(splitDNSEndpoint, c.tailnet)
-	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	tailnet := strings.TrimSpace(c.tailnet)
+	if tailnet == "" {
+		return nil, fmt.Errorf("tailnet cannot be empty")
+	}
+	requestURL := strings.TrimSuffix(c.baseURL, "/") + fmt.Sprintf(splitDNSEndpoint, url.PathEscape(tailnet))
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, reader)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiToken)
 	req.Header.Set("Accept", "application/json")
 	return req, nil
 }
@@ -92,7 +117,7 @@ func (c *HTTPClient) do(req *http.Request) (map[string][]string, error) {
 	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("tailscale API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("tailscale API returned status %d%s", resp.StatusCode, c.responseErrorSuffix(resp.Body))
 	}
 
 	var result map[string][]string
@@ -103,4 +128,60 @@ func (c *HTTPClient) do(req *http.Request) (map[string][]string, error) {
 		result = map[string][]string{}
 	}
 	return result, nil
+}
+
+func (c *HTTPClient) responseErrorSuffix(body io.Reader) string {
+	if body == nil {
+		return ""
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(body, 512))
+	if err != nil {
+		return ""
+	}
+	message := strings.TrimSpace(string(raw))
+	if message == "" {
+		return ""
+	}
+
+	var parsed struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err == nil {
+		switch {
+		case strings.TrimSpace(parsed.Message) != "":
+			message = strings.TrimSpace(parsed.Message)
+		case strings.TrimSpace(parsed.Error) != "":
+			message = strings.TrimSpace(parsed.Error)
+		}
+	}
+
+	return ": " + sanitizeAPIMessage(message, c.currentSensitiveValues())
+}
+
+func sanitizeAPIMessage(message string, sensitiveValues []string) string {
+	for _, value := range sensitiveValues {
+		if value == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, value, "[redacted]")
+	}
+	return strings.Map(func(value rune) rune {
+		switch value {
+		case '\n', '\r', '\t':
+			return ' '
+		}
+		if value < 0x20 || value == 0x7f {
+			return -1
+		}
+		return value
+	}, message)
+}
+
+func (c *HTTPClient) currentSensitiveValues() []string {
+	if c.sensitiveValues == nil {
+		return nil
+	}
+	return c.sensitiveValues()
 }
